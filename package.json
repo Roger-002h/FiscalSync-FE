@@ -1,0 +1,52 @@
+{
+  "name": "fiscalsync-fe",
+  "version": "1.0.0",
+  "description": "FiscalSync FE — Facturación Electrónica, correo y actualizaciones",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.fiscalsync.fe",
+    "productName": "FiscalSync FE",
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "icon.ico",
+      "js/**/*",
+      "data/**/*",
+      "assets/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "Roger-002h",
+      "repo": "fiscalsync-fe"
+    },
+    "win": {
+      "icon": "icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^41.1.0",
+    "electron-builder": "latest"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "nodemailer": "^8.0.5"
+  }
+}
