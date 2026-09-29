@@ -3899,6 +3899,7 @@
                     <option value="anexo1-pdf">Generar Reporte de Ventas Crédito Fiscal</option>
                     <option value="anexo2-pdf">Generar Reporte de Ventas Consumidor Final</option>
                     <option value="general-pdf">Generar Reporte General</option>
+                    <option value="ventas-zip">Descargar PDF y JSON de Ventas</option>
                 </select>
 
                 <label style="font-size:11px;font-weight:600;color:var(--rp-text-secondary);display:block;margin-top:12px;">Rango de fechas</label>
@@ -3944,6 +3945,30 @@
                 <div style="padding:0 28px 24px 28px;display:flex;justify-content:flex-end;gap:8px;">
                     <button id="feRepExportBienes" style="padding:8px 18px;background:transparent;color:var(--rp-text-secondary);font-size:11px;font-weight:600;border:1px solid var(--rp-border-strong);border-radius:9px;cursor:pointer;">Son de Bienes</button>
                     <button id="feRepExportServicios" style="padding:8px 18px;background:var(--rp-accent);color:#fff;font-size:11px;font-weight:700;border:none;border-radius:9px;cursor:pointer;">Son de Servicios</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- AGREGADO NUEVO — Reportes: modal "Descargar PDF y JSON de Ventas".
+             Mismo patrón visual que #feRepExportModal / #fsConfirmModal.
+             Lógica en FEReportes.js (_feVentasZipAbrir / _feVentasZipGenerar). -->
+        <div id="feVentasZipModal" class="modal-overlay" style="display:none;position:fixed;inset:0;z-index:9999999;align-items:center;justify-content:center;padding:16px;">
+            <div style="background:var(--rp-inset);border:1px solid var(--rp-border-strong);border-radius:20px;width:100%;max-width:420px;box-shadow:0 0 0 1px rgba(255,255,255,0.04),0 24px 64px rgba(0,0,0,0.8);overflow:hidden;">
+                <div style="padding:24px 28px 0 28px;">
+                    <p style="font-size:14px;font-weight:600;color:var(--rp-text-heading);margin:0 0 4px 0;">Descargar PDF y JSON de Ventas</p>
+                    <p style="font-size:12px;color:var(--rp-text-secondary);line-height:1.6;margin:0 0 14px 0;">Se empaquetan en un solo archivo los documentos que ya existen en el rango, conservando su estructura de carpetas.</p>
+                    <label style="font-size:11px;font-weight:600;color:var(--rp-text-secondary);display:block;">Fecha inicial
+                        <input type="date" id="feVentasFechaIni" style="width:100%;padding:8px 9px;margin:4px 0 0 0;border:1px solid var(--rp-border-strong);border-radius:8px;font-size:12.5px;background:var(--rp-surface);color:var(--rp-text-primary);box-sizing:border-box;font-family:inherit;">
+                    </label>
+                    <label style="font-size:11px;font-weight:600;color:var(--rp-text-secondary);display:block;margin-top:10px;">Fecha final
+                        <input type="date" id="feVentasFechaFin" style="width:100%;padding:8px 9px;margin:4px 0 0 0;border:1px solid var(--rp-border-strong);border-radius:8px;font-size:12.5px;background:var(--rp-surface);color:var(--rp-text-primary);box-sizing:border-box;font-family:inherit;">
+                    </label>
+                    <p id="feVentasEstado" style="font-size:12px;color:var(--rp-text-secondary);line-height:1.5;margin:14px 0 0 0;min-height:18px;"></p>
+                </div>
+                <div style="height:1px;background:var(--rp-border-strong);margin:16px 0 20px 0;"></div>
+                <div style="padding:0 28px 24px 28px;display:flex;justify-content:flex-end;gap:8px;">
+                    <button id="feVentasCancelar" onclick="_feVentasZipCerrar()" style="padding:8px 18px;background:transparent;color:var(--rp-text-secondary);font-size:11px;font-weight:600;border:1px solid var(--rp-border-strong);border-radius:9px;cursor:pointer;">Cancelar</button>
+                    <button id="feVentasGenerar" onclick="_feVentasZipGenerar()" style="padding:8px 18px;background:var(--rp-accent);color:#fff;font-size:11px;font-weight:700;border:none;border-radius:9px;cursor:pointer;">Generar ZIP</button>
                 </div>
             </div>
         </div>

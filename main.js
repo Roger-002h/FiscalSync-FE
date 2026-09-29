@@ -1603,6 +1603,225 @@ ipcMain.handle('fe-reportes-guardar-csv', async (event, { content, fileName, mes
 });
 
 // ══════════════════════════════════════════════════════════════════════
+// AGREGADO NUEVO — Reportes: "Descargar PDF y JSON de Ventas".
+// Empaqueta en UN solo .zip los .pdf/.json que YA existen en disco dentro
+// de un rango de fechas, conservando la estructura
+//   Facturacion/[Tipo de documento]/[DD-MM-AAAA]/[archivos]
+// Es de SOLO LECTURA sobre los originales: no mueve, borra, renombra,
+// regenera ni vuelve a descargar nada, y no consulta a Hacienda. Reutiliza
+// readExportConfig, FE_EXPORT_ROOT_NAME, sanitizeFolderName,
+// FE_REGEX_CARPETA_FECHA y _feGetReportesDir (destino del .zip, igual que
+// los demás reportes). Las rutas se construyen aquí a partir del nombre de
+// la empresa; el renderer nunca envía rutas.
+//
+// La carpeta "Facturacion" es POR MES DE TRABAJO y empresa, y un documento
+// queda en el mes que estaba activo al descargarlo (no siempre el de su
+// fecha de emisión), así que se revisan TODAS las carpetas de mes de esa
+// empresa en los años del rango (ver _feVentasListarFacturacionDirs).
+// Formato ZIP: RAR es propietario y no se puede crear sin Rar.exe.
+// ══════════════════════════════════════════════════════════════════════
+const FE_VENTAS_REGEX_ISO = /^\d{4}-\d{2}-\d{2}$/;
+let _feVentasZipEnCurso = false;
+
+// "DD-MM-AAAA" -> "AAAA-MM-DD" (null si no tiene forma de fecha).
+function _feVentasCarpetaAIso(nombre) {
+  if (!FE_REGEX_CARPETA_FECHA.test(nombre)) return null;
+  const p = nombre.split('-');
+  return p[2] + '-' + p[1] + '-' + p[0];
+}
+
+// "AAAA-MM-DD" -> "DD-MM-AAAA" (mismo formato que las carpetas de fecha).
+function _feVentasIsoACarpeta(iso) {
+  const p = iso.split('-');
+  return p[2] + '-' + p[1] + '-' + p[0];
+}
+
+// Valida los parámetros que llegan del renderer.
+function _feVentasValidarParams(params) {
+  const p = params || {};
+  const empresaNombre = typeof p.empresaNombre === 'string' ? p.empresaNombre.trim() : '';
+  if (!empresaNombre) return { error: 'No se recibió la empresa activa.' };
+  const ini = p.fechaInicio;
+  const fin = p.fechaFin;
+  if (typeof ini !== 'string' || typeof fin !== 'string' || !FE_VENTAS_REGEX_ISO.test(ini) || !FE_VENTAS_REGEX_ISO.test(fin)) {
+    return { error: 'Las fechas no tienen un formato válido.' };
+  }
+  if (isNaN(Date.parse(ini)) || isNaN(Date.parse(fin))) return { error: 'Las fechas no son válidas.' };
+  if (ini > fin) return { error: 'La fecha inicial no puede ser posterior a la fecha final.' };
+  const anioIni = parseInt(ini.slice(0, 4), 10);
+  const anioFin = parseInt(fin.slice(0, 4), 10);
+  if (anioIni < 2000 || anioFin > 2100) return { error: 'El rango de fechas está fuera de lo permitido.' };
+  return { empresaNombre, ini, fin, anioIni, anioFin };
+}
+
+// Devuelve las carpetas "Facturacion" existentes de la empresa, una por
+// cada mes de trabajo, en los años del rango. Solo lee: a diferencia de
+// _feGetFacturacionDir NO crea ninguna carpeta. Misma raíz que esa función
+// (carpeta configurada de PDF o Escritorio).
+function _feVentasListarFacturacionDirs(empresaNombre, anioIni, anioFin, diag) {
+  const cfg = readExportConfig();
+  const rootBase = (cfg.pdfPath && fs.existsSync(cfg.pdfPath)) ? cfg.pdfPath : app.getPath('desktop');
+  const rootDir = path.join(rootBase, FE_EXPORT_ROOT_NAME);
+  const empresaCarpeta = sanitizeFolderName(empresaNombre);
+  const empresaLower = empresaCarpeta.toLowerCase();
+  if (diag) { diag.raiz = rootDir; diag.existeRaiz = fs.existsSync(rootDir); diag.empresaCarpeta = empresaCarpeta; diag.meses = []; }
+  const dirs = [];
+  for (let y = anioIni; y <= anioFin; y++) {
+    const yearDir = path.join(rootDir, 'FiscalSync ' + y);
+    let meses;
+    try { meses = fs.readdirSync(yearDir, { withFileTypes: true }); } catch (e) { continue; }
+    for (const mes of meses) {
+      if (!mes.isDirectory() || mes.name.indexOf('FiscalSync - ') !== 0) continue;
+      const mesDir = path.join(yearDir, mes.name);
+      // La carpeta de la empresa se compara sin distinguir mayúsculas/minúsculas.
+      let empresaDirName = null;
+      try {
+        const hijos = fs.readdirSync(mesDir, { withFileTypes: true });
+        const hit = hijos.filter(h => h.isDirectory() && h.name.trim().toLowerCase() === empresaLower)[0];
+        if (hit) empresaDirName = hit.name;
+        if (diag) diag.meses.push(mes.name + ' [' + hijos.filter(h => h.isDirectory()).map(h => h.name).join(', ') + ']');
+      } catch (e) { continue; }
+      if (!empresaDirName) continue;
+      const facDir = path.join(mesDir, empresaDirName, 'Facturacion');
+      try { if (fs.statSync(facDir).isDirectory()) dirs.push(facDir); } catch (e) { /* no existe: se omite */ }
+    }
+  }
+  if (diag) diag.facturacionDirs = dirs.length;
+  return dirs;
+}
+
+// Recorre Facturacion/[Tipo]/[Fecha]/ y junta los .pdf/.json cuya carpeta
+// de fecha esté dentro del rango [iniIso, finIso] (inclusive). No crea una
+// clasificación propia: usa las carpetas de tipo tal como están en disco
+// (cualquier tipo, incluidos "Documentos Invalidados" y "Otros Documentos")
+// y omite "Reportes", que vive en la misma carpeta pero no son documentos.
+// Devuelve { archivos: [{ abs, rel }], carpetas: n }.
+function _feVentasRecolectar(empresaNombre, iniIso, finIso, anioIni, anioFin, diag) {
+  const vistos = new Set();
+  const carpetas = new Set();
+  const archivos = [];
+  if (diag) { diag.tipos = []; diag.fechasFueraDeRango = 0; diag.fechasFuera = new Set(); }
+
+  // Agrega los .pdf/.json de UNA carpeta de fecha si está dentro del rango.
+  const tomarFecha = (fechaDir, fechaNombre, tipoNombre) => {
+    const iso = _feVentasCarpetaAIso(fechaNombre);
+    if (!iso) return;
+    if (iso < iniIso || iso > finIso) { if (diag) { diag.fechasFueraDeRango++; diag.fechasFuera.add(iso); } return; }
+    let files;
+    try { files = fs.readdirSync(fechaDir, { withFileTypes: true }); } catch (e) { return; }
+    for (const f of files) {
+      if (!f.isFile()) continue;
+      const ext = path.extname(f.name).toLowerCase();
+      if (ext !== '.pdf' && ext !== '.json') continue;
+      const rel = 'Facturacion/' + (tipoNombre ? tipoNombre + '/' : '') + fechaNombre + '/' + f.name;
+      const clave = rel.toLowerCase();
+      if (vistos.has(clave)) continue; // mismo archivo en dos meses de trabajo: se incluye una sola vez
+      vistos.add(clave);
+      carpetas.add((tipoNombre || '') + '/' + fechaNombre);
+      archivos.push({ abs: path.join(fechaDir, f.name), rel });
+    }
+  };
+
+  for (const facDir of _feVentasListarFacturacionDirs(empresaNombre, anioIni, anioFin, diag)) {
+    let tipos;
+    try { tipos = fs.readdirSync(facDir, { withFileTypes: true }); } catch (e) { continue; }
+    for (const tipo of tipos) {
+      if (!tipo.isDirectory() || tipo.name === 'Reportes') continue;
+      const tipoDir = path.join(facDir, tipo.name);
+      // Estructura antigua: carpeta de fecha directamente en Facturacion (sin tipo).
+      if (FE_REGEX_CARPETA_FECHA.test(tipo.name)) { tomarFecha(tipoDir, tipo.name, null); continue; }
+      if (diag && diag.tipos.indexOf(tipo.name) === -1) diag.tipos.push(tipo.name);
+      let fechas;
+      try { fechas = fs.readdirSync(tipoDir, { withFileTypes: true }); } catch (e) { continue; }
+      for (const fecha of fechas) {
+        if (!fecha.isDirectory()) continue;
+        tomarFecha(path.join(tipoDir, fecha.name), fecha.name, tipo.name);
+      }
+    }
+  }
+  return { archivos, carpetas: carpetas.size };
+}
+
+// Paso 1: solo cuenta (no escribe nada en disco).
+// params: { empresaNombre, fechaInicio: 'AAAA-MM-DD', fechaFin: 'AAAA-MM-DD' }
+ipcMain.handle('fe-ventas-buscar', async (event, params) => {
+  try {
+    const v = _feVentasValidarParams(params);
+    if (v.error) return { error: v.error };
+    const diag = {};
+    const r = _feVentasRecolectar(v.empresaNombre, v.ini, v.fin, v.anioIni, v.anioFin, diag);
+    const out = { ok: true, archivos: r.archivos.length, carpetas: r.carpetas };
+    if (r.archivos.length === 0) {
+      // Solo para poder ver DÓNDE se buscó cuando no se encuentra nada.
+      out.detalle = 'Carpeta raíz: ' + diag.raiz + (diag.existeRaiz ? '' : ' (NO existe)') +
+        '\nEmpresa buscada: ' + diag.empresaCarpeta +
+        '\nMeses encontrados: ' + (diag.meses.length ? diag.meses.join(' | ') : 'ninguno') +
+        '\nCarpetas "Facturacion" de la empresa: ' + diag.facturacionDirs +
+        '\nTipos de documento vistos: ' + (diag.tipos.length ? diag.tipos.join(', ') : 'ninguno') +
+        '\nCarpetas de fecha fuera del rango: ' + diag.fechasFueraDeRango +
+        (diag.fechasFuera.size ? ' (' + Array.from(diag.fechasFuera).sort().slice(0, 10).map(_feVentasIsoACarpeta).join(', ') + ')' : '');
+    }
+    return out;
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// Paso 2: crea el .zip en [Empresa]/Facturacion/Reportes/ (mismo destino
+// silencioso de los demás reportes). Se escribe primero a ".part" y se
+// renombra al terminar, para no dejar un .zip a medias si algo falla.
+// params: { empresaNombre, fechaInicio, fechaFin, mesLabel }
+ipcMain.handle('fe-ventas-comprimir', async (event, params) => {
+  if (_feVentasZipEnCurso) return { error: 'Ya hay una generación en curso. Espera a que termine.' };
+  _feVentasZipEnCurso = true;
+  let partPath = null;
+  try {
+    const v = _feVentasValidarParams(params);
+    if (v.error) return { error: v.error };
+    const mesLabel = params && typeof params.mesLabel === 'string' ? params.mesLabel.trim() : '';
+    if (!mesLabel) return { error: 'No se recibió el mes de trabajo.' };
+
+    let archiver;
+    try { archiver = require('archiver'); } catch (e) {
+      return { error: 'Falta la dependencia "archiver". Ejecuta "npm install" en la carpeta del proyecto.' };
+    }
+
+    const r = _feVentasRecolectar(v.empresaNombre, v.ini, v.fin, v.anioIni, v.anioFin);
+    if (r.archivos.length === 0) return { ok: true, vacio: true }; // nunca se crea un zip vacío
+
+    const destDir = _feGetReportesDir(mesLabel, v.empresaNombre);
+    const nombreZip = 'Ventas_' + _feVentasIsoACarpeta(v.ini) + '_a_' + _feVentasIsoACarpeta(v.fin) + '.zip';
+    const destPath = path.join(destDir, nombreZip);
+    partPath = destPath + '.part';
+
+    await new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(partPath);
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      out.on('close', resolve);
+      out.on('error', reject);
+      archive.on('error', reject);
+      archive.on('warning', (err) => {
+        if (err && err.code === 'ENOENT') console.warn('[Ventas ZIP] archivo omitido:', err.message);
+        else reject(err);
+      });
+      archive.pipe(out);
+      for (const a of r.archivos) archive.file(a.abs, { name: a.rel }); // solo lee el original
+      archive.finalize();
+    });
+
+    fs.renameSync(partPath, destPath);
+    partPath = null;
+    shell.showItemInFolder(destPath);
+    return { ok: true, path: destPath, archivos: r.archivos.length, carpetas: r.carpetas };
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    _feVentasZipEnCurso = false;
+    if (partPath) { try { fs.unlinkSync(partPath); } catch (e) { /* noop */ } }
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════
 // Eliminar TODOS los datos de una empresa: clientes de FE, carpetas de
 // documentos (todos los años/meses, en todas las raíces configuradas) y
 // sesión del portal de Hacienda. Solo borra rutas que este mismo archivo

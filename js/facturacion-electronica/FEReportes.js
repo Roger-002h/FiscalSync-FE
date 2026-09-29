@@ -295,6 +295,16 @@
     });
 
     function _feReportesElegirTipo(tipo) {
+        // AGREGADO NUEVO — "Descargar PDF y JSON de Ventas" no es un reporte
+        // de FE_REP_TIPOS (no usa Buscar/Generar Reporte): al elegirlo solo
+        // abre su propio modal y el select vuelve al tipo anterior, para no
+        // alterar el flujo de los demás reportes.
+        if (tipo === 'ventas-zip') {
+            var sel = document.getElementById('feRepTipoSelect');
+            if (sel) sel.value = _feRepTipoSeleccionado;
+            _feVentasZipAbrir();
+            return;
+        }
         _feRepTipoSeleccionado = tipo;
         // Cambiar el tipo de reporte invalida los resultados de una
         // búsqueda anterior (pudo ser para otro anexo/formato); se oculta
@@ -683,6 +693,111 @@
         _feRepResultados = [];
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // AGREGADO NUEVO — "Descargar PDF y JSON de Ventas" (.zip)
+    // Empaqueta los .pdf/.json que YA existen en disco dentro de un rango
+    // de fechas (Facturacion/[Tipo]/[DD-MM-AAAA]/). No genera ni descarga
+    // nada de nuevo. La búsqueda y la compresión ocurren en main.js vía
+    // window.fiscalAPI.buscarVentasZip / generarVentasZip. Reutiliza
+    // _feRepEmpresaActiva, _cerrarModalAnimado, fsAlert y showToast.
+    // ══════════════════════════════════════════════════════════════════
+    var _feVentasZipOcupado = false;
+
+    function _feVentasIso(y, m, d) {
+        return y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    }
+
+    function _feVentasEstado(msg) {
+        var el = document.getElementById('feVentasEstado');
+        if (el) el.innerText = msg || '';
+    }
+
+    function _feVentasBloquear(bloquear) {
+        _feVentasZipOcupado = bloquear;
+        ['feVentasGenerar', 'feVentasCancelar', 'feVentasFechaIni', 'feVentasFechaFin'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.disabled = bloquear;
+            el.style.opacity = bloquear ? '0.6' : '1';
+            el.style.cursor = bloquear ? 'not-allowed' : '';
+        });
+    }
+
+    function _feVentasZipAbrir() {
+        var modal = document.getElementById('feVentasZipModal');
+        if (!modal) return;
+        if (!(window.fiscalAPI && window.fiscalAPI.buscarVentasZip)) {
+            fsAlert('Esta función solo está disponible en la aplicación de escritorio.');
+            return;
+        }
+        // Rango sugerido: el mes de trabajo activo (solo si aún no hay fechas).
+        var ini = document.getElementById('feVentasFechaIni');
+        var fin = document.getElementById('feVentasFechaFin');
+        if (ini && fin && !ini.value && !fin.value) {
+            ini.value = _feVentasIso(currentYear, currentMonth, 1);
+            fin.value = _feVentasIso(currentYear, currentMonth, new Date(currentYear, currentMonth + 1, 0).getDate());
+        }
+        _feVentasEstado('');
+        var panel = document.getElementById('feReportesDropdown');
+        if (panel) panel.classList.remove('open');
+        modal.classList.remove('modal-closing');
+        modal.style.display = 'flex';
+        modal.classList.add('modal-open');
+    }
+
+    function _feVentasZipCerrar() {
+        if (_feVentasZipOcupado) return; // no se cierra a mitad de una generación
+        _cerrarModalAnimado('feVentasZipModal');
+    }
+
+    function _feVentasPausa(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    function _feVentasZipGenerar() {
+        if (_feVentasZipOcupado) return; // evita generaciones simultáneas
+        var ini = document.getElementById('feVentasFechaIni').value;
+        var fin = document.getElementById('feVentasFechaFin').value;
+        if (!ini || !fin) { fsAlert('Selecciona la fecha inicial y la fecha final.'); return; }
+        if (ini > fin) { fsAlert('La fecha inicial no puede ser posterior a la fecha final.'); return; }
+
+        var emp = _feRepEmpresaActiva();
+        if (!emp || !emp.razon) { fsAlert('No se encontró la empresa activa.'); return; }
+        var base = { empresaNombre: emp.razon, fechaInicio: ini, fechaFin: fin };
+        var mesLabel = MONTH_NAMES[currentMonth] + ' ' + currentYear;
+
+        _feVentasBloquear(true);
+        _feVentasEstado('Buscando documentos...');
+
+        window.fiscalAPI.buscarVentasZip(base).then(function (busq) {
+            if (!busq || busq.error) throw new Error((busq && busq.error) || 'No se pudo buscar los documentos.');
+            if (!busq.archivos) return { vacio: true, detalle: busq.detalle };
+            _feVentasEstado('Preparando ' + busq.archivos + ' archivos...');
+            return _feVentasPausa(350).then(function () {
+                _feVentasEstado('Comprimiendo documentos...');
+                return window.fiscalAPI.generarVentasZip({
+                    empresaNombre: emp.razon, fechaInicio: ini, fechaFin: fin, mesLabel: mesLabel
+                });
+            });
+        }).then(function (res) {
+            if (res && res.error) throw new Error(res.error);
+            _feVentasBloquear(false);
+            if (!res || res.vacio) {
+                _feVentasEstado('');
+                fsAlert('No se encontraron documentos de ventas\ndentro del rango de fechas seleccionado.' + (res && res.detalle ? '\n\n' + res.detalle : ''));
+                return;
+            }
+            _feVentasEstado('Archivo ZIP generado correctamente.');
+            showToast('Archivo ZIP guardado en Facturacion/Reportes.', 'success');
+            setTimeout(function () { _feVentasZipCerrar(); }, 900);
+        }).catch(function (err) {
+            console.error('[Ventas ZIP]', err);
+            _feVentasBloquear(false);
+            _feVentasEstado('');
+            fsAlert('No se pudo generar el archivo.\n' + (err && err.message ? err.message : 'Revisa la consola para más detalle.'));
+        });
+    }
+
     // Exponer al scope global lo que necesitan los atributos onclick/onchange
     // del HTML (mismo patrón que el resto de módulos de este proyecto).
     window._feReportesToggleDropdown = _feReportesToggleDropdown;
@@ -691,5 +806,8 @@
     window._feReportesGenerar = _feReportesGenerar;
     window._feReportesResultados = _feReportesResultados;
     window._feReportesEliminarDocsEmpresa = _feReportesEliminarDocsEmpresa;
+    window._feVentasZipAbrir = _feVentasZipAbrir;
+    window._feVentasZipCerrar = _feVentasZipCerrar;
+    window._feVentasZipGenerar = _feVentasZipGenerar;
 
 })();

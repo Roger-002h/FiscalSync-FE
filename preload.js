@@ -66,6 +66,16 @@ contextBridge.exposeInMainWorld('fiscalAPI', {
     guardarReportePdf: (params) => ipcRenderer.invoke('fe-reportes-guardar-pdf', params),
     guardarReporteCsv: (params) => ipcRenderer.invoke('fe-reportes-guardar-csv', params),
 
+    // ── Reportes: Descargar PDF y JSON de Ventas (.zip) ─────────────────
+    // Empaqueta los .pdf/.json que ya existen en disco dentro de un rango
+    // de fechas (solo lectura sobre los originales). Dos pasos:
+    // 1) buscarVentasZip  -> { ok, archivos, carpetas } (no escribe nada)
+    // 2) generarVentasZip -> { ok, path, archivos, carpetas } | { ok, vacio } | { error }
+    // params: { empresaNombre, fechaInicio: 'AAAA-MM-DD', fechaFin: 'AAAA-MM-DD' }
+    //         (generarVentasZip además: mesLabel)
+    buscarVentasZip: (params) => ipcRenderer.invoke('fe-ventas-buscar', params),
+    generarVentasZip: (params) => ipcRenderer.invoke('fe-ventas-comprimir', params),
+
     // ── Eliminar TODOS los datos de una empresa (clientes FE, carpetas, sesión del portal)
     eliminarDatosEmpresaFE: (empresaId, empresaNombre) => ipcRenderer.invoke('fe-eliminar-empresa-datos', { empresaId, empresaNombre })
 });
