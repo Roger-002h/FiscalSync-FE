@@ -616,7 +616,7 @@
             var ini = document.getElementById('feRepFechaInicio').value;
             var fin = document.getElementById('feRepFechaFin').value;
             var rango = formatFecha(ini) + ' al ' + formatFecha(fin);
-            var mesLabel = MONTH_NAMES[currentMonth] + ' ' + currentYear;
+            var mesLabel = _feRepMesLabelDesdeIso(fin);
 
             var anexo1Docs = _feRepResultados.filter(function (r) { return TIPOS_ANEXO1.indexOf(r.tipoDoc) !== -1; });
             var anexo2Docs = _feRepResultados.filter(function (r) { return TIPOS_ANEXO2.indexOf(r.tipoDoc) !== -1; });
@@ -643,6 +643,16 @@
                 else fsAlert('Hubo un problema al guardar el reporte. Revisa la consola para más detalle.');
             });
         });
+    }
+
+    // CAMBIO — el mes de la carpeta de Reportes ya no depende de un selector
+    // de mes: se toma de la fecha FINAL del rango elegido ("AAAA-MM-DD" ->
+    // "Agosto 2026"). Si la fecha no tiene ese formato, se usa como respaldo
+    // el mes en curso (comportamiento anterior).
+    function _feRepMesLabelDesdeIso(iso) {
+        var m = /^(\d{4})-(\d{2})-\d{2}$/.exec(String(iso || '').trim());
+        if (!m || +m[2] < 1 || +m[2] > 12) return MONTH_NAMES[currentMonth] + ' ' + currentYear;
+        return MONTH_NAMES[+m[2] - 1] + ' ' + m[1];
     }
 
     function _feReportesGuardarUnArchivo(anexo, registros, tipoIng, rango, mesLabel, emp, formato) {
@@ -764,7 +774,7 @@
         var emp = _feRepEmpresaActiva();
         if (!emp || !emp.razon) { fsAlert('No se encontró la empresa activa.'); return; }
         var base = { empresaNombre: emp.razon, fechaInicio: ini, fechaFin: fin };
-        var mesLabel = MONTH_NAMES[currentMonth] + ' ' + currentYear;
+        var mesLabel = _feRepMesLabelDesdeIso(fin);
 
         _feVentasBloquear(true);
         _feVentasEstado('Buscando documentos...');

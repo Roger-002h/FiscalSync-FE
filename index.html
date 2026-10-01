@@ -3828,21 +3828,6 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
             Clientes
         </button>
-        <!-- Corrección 06 — Selector de "Mes de trabajo": determina
-             completamente dónde se guardan el JSON y el PDF que se
-             descarguen a partir de ahora (ver _feChangeMes / fe-set-context
-             en main.js). Es el MISMO componente visual (clases
-             "month-selector"/"month-label", ya definidas para el selector
-             de mes de Gestión) — mismos estilos, tipografía, tamaño y
-             comportamiento de flechas prev/next. Solo su estado
-             (_feMesIndex/_feAnio) es independiente del de Gestión
-             (currentMonth/currentYear), como ya lo era con el <select>
-             anterior. -->
-        <div class="month-selector electron-no-drag" style="flex-shrink:0;">
-            <button onclick="_feChangeMes(-1)" title="Mes anterior"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
-            <span id="feMonthLabel" class="month-label">Enero 2026</span>
-            <button onclick="_feChangeMes(1)" title="Mes siguiente"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
-        </div>
         <span id="facturacionElecLoading" class="hidden" style="font-size:11px;color:var(--rp-text-secondary);flex-shrink:0;">Cargando…</span>
     </div>
     <div style="flex:1;position:relative;background:#fff;" id="facturacionElecWebviewContainer">

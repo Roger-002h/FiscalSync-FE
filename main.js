@@ -140,7 +140,6 @@ function _feMesLabelPorDefecto() {
 
 function _feContextoDe(partition) {
   return _feContextos[partition] || {
-    mesLabel: _feMesLabelPorDefecto(),
     empresaNombre: 'Empresa',
     ultimoJsonBase: null,
     ultimaCarpetaFecha: null
@@ -304,24 +303,26 @@ function createWindow() {
       sess.on('will-download', (downloadEvent, item, webContentsDeDescarga) => {
         try {
           const ctx = _feContextoDe(partition);
-          const dir = _feGetFacturacionDir(ctx.mesLabel, ctx.empresaNombre);
           const originalName = item.getFilename();
           const ext = path.extname(originalName).toLowerCase();
           let destName;
-          // AGREGADO — carpeta por fecha: mientras se descarga el .json no
-          // se sabe todavía su fecha (está dentro del archivo), así que
-          // sigue guardándose primero en la raíz de "Facturacion" como
-          // hasta ahora; recién en el 'done' de más abajo se mueve a su
-          // subcarpeta de fecha. El .pdf, en cambio, se descarga DESPUÉS
-          // del .json correspondiente, así que para cuando llega ya
-          // conocemos esa carpeta (ctx.ultimaCarpetaFecha) y puede ir
-          // directo ahí, quedando junto a su .json.
-          let dirDestino = dir;
+          // CAMBIO — el mes/año de la carpeta YA NO viene de un selector
+          // (antes ctx.mesLabel): se obtiene de identificacion.fecEmi del
+          // propio .json. Mientras se descarga el .json todavía no se sabe
+          // su fecha (está dentro del archivo), así que se descarga a una
+          // carpeta temporal y recién en el 'done' de más abajo se lee la
+          // fecha, se crea (si no existe) la carpeta Año/Mes/Tipo/Fecha
+          // correspondiente y se mueve el archivo ahí. El .pdf se descarga
+          // DESPUÉS del .json correspondiente, así que para cuando llega ya
+          // conocemos esa carpeta (ctx.ultimaCarpetaFecha, ruta absoluta) y
+          // va directo ahí, quedando junto a su .json.
+          let dirDestino;
 
           if (ext === '.json') {
             // Punto 1/2 — el .json se guarda con su nombre tal cual, y se
             // recuerda su nombre base para que el PDF (punto 6) lo use.
             destName = sanitizeFolderName(originalName);
+            dirDestino = _feDirTemporalDescargas();
             _feContextos[partition] = Object.assign({}, ctx, {
               ultimoJsonBase: path.basename(originalName, ext),
               ultimaCarpetaFecha: null // se resuelve recién al terminar la descarga (ver 'done')
@@ -332,44 +333,61 @@ function createWindow() {
             const base = ctx.ultimoJsonBase || path.basename(originalName, ext);
             destName = sanitizeFolderName(base) + '.pdf';
             if (ctx.ultimaCarpetaFecha) {
-              dirDestino = path.join(dir, ctx.ultimaCarpetaFecha);
+              dirDestino = ctx.ultimaCarpetaFecha;
               if (!fs.existsSync(dirDestino)) fs.mkdirSync(dirDestino, { recursive: true });
+            } else {
+              // Respaldo: PDF sin un .json previo con fecha conocida.
+              dirDestino = _feGetFacturacionDir(_feMesLabelPorDefecto(), ctx.empresaNombre);
             }
           } else {
             destName = sanitizeFolderName(originalName);
+            dirDestino = _feGetFacturacionDir(_feMesLabelPorDefecto(), ctx.empresaNombre);
           }
 
           const destPath = path.join(dirDestino, destName);
           item.setSavePath(destPath);
 
           item.once('done', (doneEvent, state) => {
-            // AGREGADO — una vez que el .json terminó de descargarse, ya
-            // se puede leer su contenido: se calcula/crea su carpeta de
-            // fecha (identificacion.fecEmi) y se mueve el archivo ahí
-            // desde la raíz de "Facturacion". Se recuerda esa carpeta en
-            // el contexto para que el .pdf de este mismo documento (que
-            // llega después) se guarde directo junto a él.
+            // CAMBIO — una vez que el .json terminó de descargarse, se lee
+            // su fecha de emisión (identificacion.fecEmi) para determinar
+            // año y mes, se crea (si no existe) la carpeta correspondiente
+            // y se mueve el archivo ahí. Se recuerda esa carpeta (ruta
+            // absoluta) para que el .pdf de este mismo documento se guarde
+            // en el mismo lugar exacto que su .json.
             let rutaFinal = destPath;
+            let avisoUbicacion = null;
             if (state === 'completed' && ext === '.json') {
-              const carpetaFecha = _feCarpetaFechaDesdeJson(destPath, dir);
-              if (carpetaFecha) {
-                try {
-                  const nuevoPath = path.join(carpetaFecha, path.basename(destPath));
-                  if (!fs.existsSync(nuevoPath)) fs.renameSync(destPath, nuevoPath);
-                  rutaFinal = nuevoPath;
-                } catch (e) {
-                  console.warn('[Facturación Electrónica] No se pudo mover el .json a su carpeta de fecha:', e.message);
+              const ubic = _feUbicarJsonPorFecha(destPath, ctx.empresaNombre);
+              let carpetaFecha = null;
+              let destinoJson;
+              if (ubic.ok) {
+                carpetaFecha = ubic.carpetaFecha;
+                destinoJson = path.join(carpetaFecha, path.basename(destPath));
+              } else {
+                // Sin fecEmi válida no se puede saber el mes: se guarda en
+                // la raíz de Facturacion del mes actual (igual que antes
+                // se dejaba el archivo sin mover) y se avisa al usuario.
+                avisoUbicacion = ubic.motivo + ' Se guardó en la carpeta del mes actual.';
+                destinoJson = path.join(
+                  _feGetFacturacionDir(_feMesLabelPorDefecto(), ctx.empresaNombre),
+                  path.basename(destPath)
+                );
+              }
+              try {
+                if (!fs.existsSync(destinoJson)) {
+                  _feMoverArchivo(destPath, destinoJson);
+                } else {
+                  // El mismo documento ya estaba guardado: se conserva ese
+                  // y se descarta la copia temporal.
+                  try { fs.unlinkSync(destPath); } catch (e2) { /* noop */ }
                 }
+                rutaFinal = destinoJson;
+              } catch (e) {
+                console.warn('[Facturación Electrónica] No se pudo mover el .json a su carpeta de fecha:', e.message);
               }
               const ctxActual = _feContextoDe(partition);
               _feContextos[partition] = Object.assign({}, ctxActual, {
-                // AGREGADO — se guarda la ruta relativa completa (que
-                // ahora puede incluir la carpeta de tipo de documento
-                // antes de la de fecha, ver _feCarpetaFechaDesdeJson) en
-                // vez de solo el nombre de la carpeta de fecha, para que
-                // el .pdf de este mismo documento (líneas de arriba) se
-                // guarde en el mismo lugar exacto que su .json.
-                ultimaCarpetaFecha: carpetaFecha ? path.relative(dir, carpetaFecha) : null
+                ultimaCarpetaFecha: carpetaFecha || (ubic.ok ? null : path.dirname(destinoJson))
               });
             }
 
@@ -378,7 +396,8 @@ function createWindow() {
                 ok: state === 'completed',
                 state: state,
                 ext: ext,
-                path: rutaFinal
+                path: rutaFinal,
+                aviso: avisoUbicacion
               });
             }
             // Corrección 07, punto 2 — apenas el PDF termina de guardarse
@@ -762,6 +781,67 @@ function _feCarpetaFechaDesdeJson(jsonPath, facturacionDir) {
     console.warn('[Facturación Electrónica] No se pudo leer la fecha/tipo del .json para organizarlo por carpeta:', e.message);
     return null;
   }
+}
+
+// CAMBIO — El mes de almacenamiento ya no depende de un selector: se
+// obtiene de identificacion.fecEmi del .json que se está procesando.
+const FE_MESES_NOMBRES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// "2026-08-15" -> "Agosto 2026" (mismo formato de mesLabel que ya entiende
+// getExportDir). Devuelve null si la fecha no tiene el formato esperado.
+function _feMesLabelDesdeFecEmi(fecEmi) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fecEmi || '').trim());
+  if (!m) return null;
+  const mes = parseInt(m[2], 10);
+  if (mes < 1 || mes > 12) return null;
+  return FE_MESES_NOMBRES[mes - 1] + ' ' + m[1];
+}
+
+// Carpeta temporal donde cae el .json mientras se descarga (aún no se sabe
+// su fecha). No es parte de la estructura de documentos del usuario.
+function _feDirTemporalDescargas() {
+  const d = path.join(app.getPath('temp'), 'FiscalSync FE - descargas');
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+// Mueve un archivo; si origen y destino están en unidades distintas
+// (rename falla con EXDEV) copia y elimina el original.
+function _feMoverArchivo(origen, destino) {
+  try {
+    fs.renameSync(origen, destino);
+  } catch (e) {
+    if (e && e.code === 'EXDEV') {
+      fs.copyFileSync(origen, destino);
+      fs.unlinkSync(origen);
+    } else {
+      throw e;
+    }
+  }
+}
+
+// Lee un .json descargado y devuelve la carpeta final del documento:
+// [Año]/[Mes de fecEmi]/[Empresa]/Facturacion/[Tipo]/[DD-MM-AAAA], creando
+// lo que no exista. { ok:true, carpetaFecha, mesLabel } o { ok:false, motivo }.
+function _feUbicarJsonPorFecha(jsonPath, empresaNombre) {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  } catch (e) {
+    return { ok: false, motivo: 'No se pudo leer el JSON descargado.' };
+  }
+  const fecEmi = data && data.identificacion && data.identificacion.fecEmi;
+  const mesLabel = _feMesLabelDesdeFecEmi(fecEmi);
+  if (!mesLabel) {
+    return { ok: false, motivo: 'El JSON no trae una fecha de emisión válida (identificacion.fecEmi).' };
+  }
+  const facturacionDir = _feGetFacturacionDir(mesLabel, empresaNombre);
+  const carpetaFecha = _feCarpetaFechaDesdeJson(jsonPath, facturacionDir);
+  if (!carpetaFecha) {
+    return { ok: false, motivo: 'No se pudo determinar la carpeta del documento.' };
+  }
+  return { ok: true, carpetaFecha: carpetaFecha, mesLabel: mesLabel };
 }
 
 // Migra a su subcarpeta de fecha los .json/.pdf que hayan quedado sueltos
@@ -1177,22 +1257,17 @@ ipcMain.handle('fe-resolver-adjuntos-correo', async (event, { pdfPath, jsonPath,
   }
 });
 
-// fe-set-context — el renderer llama esto cada vez que el usuario entra a
-// Facturación Electrónica o cambia el selector de "Mes de trabajo" (ver
-// _feEnviarContexto en index.html), para que las descargas de esa empresa
-// (JSON automático y PDF desde la pestaña nueva) se guarden en la carpeta
-// correcta. Mientras el usuario no cambie el mes, todo lo que se descargue
-// sigue yendo al mismo período — cambiar el mes redirige los PRÓXIMOS
-// archivos, sin tocar los ya guardados.
-ipcMain.handle('fe-set-context', async (event, { empresaId, mesLabel, empresaNombre } = {}) => {
+// fe-set-context — el renderer llama esto al entrar a Facturación
+// Electrónica (ver _feEnviarContexto) para informar la empresa activa. El
+// mes de las descargas ya NO viene de aquí: se obtiene de
+// identificacion.fecEmi de cada .json (ver _feUbicarJsonPorFecha).
+ipcMain.handle('fe-set-context', async (event, { empresaId, empresaNombre } = {}) => {
   try {
     if (!empresaId) return { error: 'empresaId es requerido' };
     const partition = 'persist:facturacion-electronica-' + empresaId;
     const anterior = _feContextos[partition] || {};
-    const mesLabelFinal = mesLabel || _feMesLabelPorDefecto();
     const empresaNombreFinal = empresaNombre || anterior.empresaNombre || 'Empresa';
     _feContextos[partition] = {
-      mesLabel: mesLabelFinal,
       empresaNombre: empresaNombreFinal,
       ultimoJsonBase: anterior.ultimoJsonBase || null,
       ultimaCarpetaFecha: anterior.ultimaCarpetaFecha || null
@@ -1201,7 +1276,9 @@ ipcMain.handle('fe-set-context', async (event, { empresaId, mesLabel, empresaNom
     // este cambio) en la carpeta de Facturacion de esta empresa/mes, se
     // migran solos a su carpeta de fecha. No bloquea la respuesta al
     // renderer si algo falla (ver try/catch dentro de _feMigrarSueltos).
-    const _feFacturacionDirActual = _feGetFacturacionDir(mesLabelFinal, empresaNombreFinal);
+    // CAMBIO — ya no hay mes de trabajo seleccionado: esta migración de
+    // archivos antiguos sigue aplicándose sobre la carpeta del mes actual.
+    const _feFacturacionDirActual = _feGetFacturacionDir(_feMesLabelPorDefecto(), empresaNombreFinal);
     _feMigrarSueltos(_feFacturacionDirActual);
     // AGREGADO — además, se migran las carpetas de fecha viejas (de antes
     // de agregar la carpeta de tipo de documento) a la estructura nueva.

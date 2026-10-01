@@ -5,30 +5,11 @@
 
 
 
-    // ══ Corrección 04 — Facturación Electrónica: "Mes de trabajo" ══
-    // Independiente del mes que esté abierto en Gestión (currentMonth/
-    // currentYear) porque el usuario puede estar en Facturación
-    // Electrónica sin haber entrado nunca a Gestión para esa empresa/mes.
-    // Arranca con el mes/año actual, igual que currentMonth/currentYear.
-    var _feMesIndex = new Date().getMonth();
-    var _feAnio     = new Date().getFullYear();
-
-    function _feMesLabelActual() {
-        return MONTH_NAMES[_feMesIndex] + ' ' + _feAnio;
-    }
-
-    // Corrección 06 — refresca el <span class="month-label"> del selector
-    // de Facturación Electrónica, igual que updateMonthLabel() hace con el
-    // de Gestión.
-    function _feUpdateMesLabel() {
-        var lbl = document.getElementById('feMonthLabel');
-        if (lbl) lbl.innerText = _feMesLabelActual();
-    }
-
-    // Envía al proceso principal el contexto vigente (empresa + mes de
-    // trabajo) para que las próximas descargas (JSON automático y PDF
-    // desde la pestaña nueva de Hacienda) se guarden en:
-    // Gestión → [Mes de trabajo] → [Empresa] → Facturacion
+    // Envía al proceso principal el contexto vigente (empresa) para que las
+    // próximas descargas (JSON automático y PDF desde la pestaña nueva de
+    // Hacienda) se guarden en la carpeta de esa empresa. El mes/año ya NO
+    // se envía: main.js lo obtiene de identificacion.fecEmi de cada JSON
+    // (Año → Mes → Empresa → Facturacion → Tipo → Fecha).
     function _feEnviarContexto() {
         var empresaId = _facturacionElecActiva && _facturacionElecActiva.empresaId;
         if (!empresaId) return;
@@ -36,71 +17,8 @@
         if (!window.fiscalAPI || !window.fiscalAPI.setFacturacionContext) return;
         window.fiscalAPI.setFacturacionContext({
             empresaId: empresaId,
-            mesLabel: _feMesLabelActual(),
             empresaNombre: emp ? emp.razon : 'Empresa'
         }).catch(function() {});
-    }
-
-    // Corrección 06 — Handler de las flechas prev/next del selector de mes
-    // de trabajo (mismo comportamiento del stepper de Gestión, ver
-    // changeMonth()): cambiar el mes redirige los PRÓXIMOS documentos
-    // descargados a la carpeta del mes recién elegido, sin tocar lo ya
-    // guardado. Es independiente de currentMonth/currentYear de Gestión —
-    // no recarga libros ni datos, solo actualiza dónde guardar archivos.
-    function _feChangeMes(delta) {
-        _feMesIndex += delta;
-        if (_feMesIndex > 11) { _feMesIndex = 0; _feAnio++; }
-        if (_feMesIndex < 0)  { _feMesIndex = 11; _feAnio--; }
-        _feUpdateMesLabel();
-        _feEnviarContexto();
-
-        // Agregado 01 — Integración Facturación Electrónica ↔ Gestión:
-        // mantener el selector de mes de Gestión sincronizado con el que
-        // se acaba de elegir aquí (ver _sincronizarMesGestionConFE).
-        _sincronizarMesGestionConFE();
-    }
-
-    // Agregado 01 — Integración Facturación Electrónica ↔ Gestión, punto
-    // "Sincronización del selector de mes": cuando el usuario cambia de
-    // mes en Facturación Electrónica, currentMonth/currentYear de
-    // Gestión se actualizan para que ambas pantallas trabajen SIEMPRE
-    // sobre el mismo período (evita que un documento se cargue en
-    // Correos/Ventas bajo un mes distinto al que el usuario ve en
-    // pantalla). Si además hay una sesión de Gestión ya cargada en
-    // memoria para esta MISMA empresa (activeEmpresaId y
-    // _facturacionElecActiva.empresaId siempre coinciden cuando ambos
-    // están definidos — ver Corrección 01, ciclo de vida de Facturación
-    // Electrónica por empresa), se guarda el período anterior y se
-    // recarga igual que hace changeMonth(), para no dejar en memoria
-    // datos de un período que ya no corresponde al seleccionado. Si no
-    // hay sesión de Gestión cargada todavía, solo se actualizan las
-    // variables de período (para que, si el usuario entra a Gestión más
-    // adelante, ya abra directamente en el período correcto).
-    function _sincronizarMesGestionConFE() {
-        if (currentMonth === _feMesIndex && currentYear === _feAnio) return;
-
-        var haySesionGestionMismaEmpresa = !!activeEmpresaId &&
-            typeof _facturacionElecActiva !== 'undefined' &&
-            activeEmpresaId === _facturacionElecActiva.empresaId;
-
-        if (haySesionGestionMismaEmpresa) {
-            saveCurrentMonthData();
-            if (_renderRAF) { cancelAnimationFrame(_renderRAF); _renderRAF = null; }
-            _renderPending = false;
-        }
-
-        currentMonth = _feMesIndex;
-        currentYear  = _feAnio;
-
-        if (haySesionGestionMismaEmpresa) {
-            _aplicarCambioDePeriodoGestion();
-        } else {
-            // No hay libros de Gestión cargados en memoria para esta
-            // empresa todavía — solo se refresca el label por si el
-            // header de Gestión llegara a estar visible.
-            var lbl = document.getElementById('monthLabel');
-            if (lbl) updateMonthLabel();
-        }
     }
 
     // Corrección 04 — aviso opcional cuando main.js termina de guardar un
@@ -114,7 +32,7 @@
                 // combinan en un solo aviso — ver punto 11 de la especificación).
                 showToast('El documento ' + tipo + ' se descargó correctamente.', 'success', {
                     title: 'Archivo ' + tipo + ' descargado',
-                    details: 'Guardado en la carpeta Facturación: ' + info.path
+                    details: 'Guardado en la carpeta Facturación: ' + info.path + (info.aviso ? '\n' + info.aviso : '')
                 });
             } else {
                 showToast('No fue posible descargar el archivo de Facturación Electrónica.', 'error', {
@@ -174,11 +92,6 @@
         _feActualizarEmpresaActivaUI(empresaId);
         _asegurarWebviewFacturacion(empresaId);
         _empresaGuardarUltima(empresaId); // AGREGADO NUEVO — Multiempresa: recuerda la última empresa usada
-        // Ya no hay sesión de Gestión con la que sincronizar el período:
-        // Facturación Electrónica siempre arranca en el mes/año actual.
-        _feMesIndex = new Date().getMonth();
-        _feAnio     = new Date().getFullYear();
-        _feUpdateMesLabel();
         _feEnviarContexto();
         _mostrarFacturacionElecDesdeInicio();
     }
@@ -335,9 +248,6 @@
         var nombre = document.getElementById('facturacionElecEmpresaNombre');
         if (nombre) nombre.innerText = '';
         _feActualizarEmpresaActivaUI(null); // AGREGADO NUEVO — Multiempresa: oculta el selector
-        _feMesIndex = new Date().getMonth();
-        _feAnio     = new Date().getFullYear();
-        _feUpdateMesLabel();
         _feSetBarraInerte(true);
         var fe = document.getElementById('facturacionElectronicaScreen');
         if (!fe) return;
@@ -1197,20 +1107,3 @@
             _feBusquedaRapidaAbrir();
         }
     });
-
-    // Agregado 01 — Integración Facturación Electrónica ↔ Gestión, punto
-    // "Sincronización del selector de mes": cuando el usuario cambia de
-    // mes en Gestión (changeMonth), el selector de "Mes de trabajo" de
-    // Facturación Electrónica (_feMesIndex/_feAnio) se actualiza para
-    // quedar en el MISMO mes — así, los próximos documentos que se
-    // descarguen desde Facturación Electrónica se guardan en la carpeta
-    // correcta y el emparejamiento de Correos (_correosContextoActivo)
-    // sigue apuntando al mismo período sin importar cuál de las dos
-    // pantallas esté activa en ese momento.
-    function _sincronizarMesFEconGestion() {
-        if (_feMesIndex === currentMonth && _feAnio === currentYear) return;
-        _feMesIndex = currentMonth;
-        _feAnio     = currentYear;
-        _feUpdateMesLabel();
-        _feEnviarContexto();
-    }

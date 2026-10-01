@@ -1,6 +1,6 @@
 {
   "name": "fiscalsync-fe",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "FiscalSync FE — Facturación Electrónica, correo y actualizaciones",
   "main": "main.js",
   "scripts": {
