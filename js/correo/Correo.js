@@ -58,7 +58,7 @@
         var feScreen = document.getElementById('facturacionElectronicaScreen');
         var feActiva = feScreen && feScreen.classList.contains('active');
         if (feActiva && typeof _facturacionElecActiva !== 'undefined' && _facturacionElecActiva.empresaId) {
-            return { empresaId: _facturacionElecActiva.empresaId, anio: _feAnio, mes: _feMesIndex };
+            return { empresaId: _facturacionElecActiva.empresaId, anio: 'fe', mes: 0 };
         }
         return { empresaId: activeEmpresaId, anio: currentYear, mes: currentMonth };
     }

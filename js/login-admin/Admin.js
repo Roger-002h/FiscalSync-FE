@@ -202,7 +202,6 @@
                 setTimeout(function() {
                     document.getElementById('loginScreen').classList.add('hidden');
                 }, 400);
-                showToast('Bienvenido, ' + userVal, 'success');
                 // Proyecto FiscalSync FE — de un flujo multiempresa a una
                 // sola empresa: en vez de dejar que empresaScreen (ya
                 // marcada "active" por defecto en el HTML) quede visible
@@ -212,6 +211,10 @@
                 // pantalla de configuración inicial (ver
                 // _iniciarFlujoPostLogin en Empresas.js).
                 _iniciarFlujoPostLogin();
+                // El toast se dispara DESPUÉS de _iniciarFlujoPostLogin() para
+                // que _notifUpdatePosition() ya encuentre activa la pantalla de
+                // Facturación Electrónica y lo ubique debajo de #feTopbar.
+                showToast('Bienvenido, ' + userVal, 'success');
             } else {
                 document.getElementById('loginUser').classList.add('login-error');
                 document.getElementById('loginPass').classList.add('login-error');

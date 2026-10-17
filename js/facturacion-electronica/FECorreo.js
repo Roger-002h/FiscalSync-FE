@@ -308,6 +308,19 @@
         });
     }
 
+    // Muestra el botón "Correo" de la barra superior solo si la empresa
+    // activa tiene el correo configurado (mismo criterio que usa
+    // _feCorreoProcesarDocumentoListo: emp.correosActivo). Si se
+    // desconfigura con el panel abierto, lo cierra.
+    function _feCorreoActualizarVisibilidad(emp) {
+        var btn = document.getElementById('btnFeCorreo');
+        if (!btn) return;
+        var configurado = !!(emp && emp.correosActivo && emp.correosEmail);
+        btn.style.display = configurado ? 'flex' : 'none';
+        if (!configurado) _feCorreoCerrarDropdown();
+    }
+    window._feCorreoActualizarVisibilidad = _feCorreoActualizarVisibilidad;
+
     // ── Panel flotante "Correo" (#feCorreoDropdown) ─────────────────────
     function _feCorreoToggleDropdown(ev) {
         if (ev) ev.stopPropagation();
@@ -343,6 +356,10 @@
         var btn = document.getElementById('btnFeCorreo');
         if (!dd || !dd.classList.contains('open')) return;
         if (dd.contains(e.target) || (btn && btn.contains(e.target))) return;
+        // Clientes pertenece al mismo grupo: clicar en él no cierra Correo.
+        var cli = document.getElementById('feClientesDropdown');
+        var cliBtn = document.getElementById('btnFeClientes');
+        if ((cli && cli.contains(e.target)) || (cliBtn && cliBtn.contains(e.target))) return;
         _feCorreoCerrarDropdown();
     });
 

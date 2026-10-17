@@ -563,6 +563,7 @@ function createWindow() {
 
   win.once('ready-to-show', () => {
     win.setTitle(winTitle);
+    win.maximize();
     win.show();
   });
 
@@ -1616,7 +1617,7 @@ ipcMain.handle('fe-clientes-exportar-csv', async (event, { empresaId, empresaNom
 // que ya usa save-export-file.
 // params: { htmlSnapshot, fileName, mesLabel, empresaNombre }
 // ══════════════════════════════════════════════════════════════════════
-ipcMain.handle('fe-reportes-guardar-pdf', async (event, { htmlSnapshot, fileName, mesLabel, empresaNombre } = {}) => {
+ipcMain.handle('fe-reportes-guardar-pdf', async (event, { htmlSnapshot, fileName, mesLabel, empresaNombre, headerTemplate, footerTemplate, noAbrir } = {}) => {
   let pdfWin = null;
   try {
     if (!htmlSnapshot) return { error: 'No se recibió el contenido del reporte' };
@@ -1628,7 +1629,20 @@ ipcMain.handle('fe-reportes-guardar-pdf', async (event, { htmlSnapshot, fileName
     pdfWin = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
     await pdfWin.loadURL('data:text/html;charset=UTF-8,' + encodeURIComponent(htmlSnapshot));
 
-    const buffer = await pdfWin.webContents.printToPDF({
+    // CAMBIO — si el renderer manda encabezado/pie (los 3 reportes con el
+    // diseño nuevo), se imprime carta VERTICAL con encabezado y pie en cada
+    // página ("Página X de Y"). Sin plantillas, se conserva el comportamiento
+    // anterior (carta horizontal, márgenes por defecto).
+    const _conPlantillas = !!(headerTemplate || footerTemplate);
+    const buffer = await pdfWin.webContents.printToPDF(_conPlantillas ? {
+      printBackground: true,
+      pageSize: 'Letter',
+      landscape: false,
+      displayHeaderFooter: true,
+      headerTemplate: headerTemplate || '<span></span>',
+      footerTemplate: footerTemplate || '<span></span>',
+      margins: { top: 1.0, bottom: 0.8, left: 0.4, right: 0.4 }
+    } : {
       printBackground: true,
       pageSize: 'Letter',
       landscape: true,
@@ -1638,7 +1652,7 @@ ipcMain.handle('fe-reportes-guardar-pdf', async (event, { htmlSnapshot, fileName
 
     // Igual que con los PDF de Facturación (ver 'fe-descarga-completada'),
     // se abre automáticamente para que el usuario lo vea de inmediato.
-    shell.openPath(destPath).catch(function() {});
+    if (!noAbrir) shell.openPath(destPath).catch(function() {});
 
     return { ok: true, path: destPath };
   } catch (e) {
@@ -1888,7 +1902,7 @@ ipcMain.handle('fe-ventas-comprimir', async (event, params) => {
 
     fs.renameSync(partPath, destPath);
     partPath = null;
-    shell.showItemInFolder(destPath);
+    if (!(params && params.noAbrir)) shell.showItemInFolder(destPath);
     return { ok: true, path: destPath, archivos: r.archivos.length, carpetas: r.carpetas };
   } catch (e) {
     return { error: e.message };

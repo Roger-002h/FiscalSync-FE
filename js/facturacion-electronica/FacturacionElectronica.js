@@ -104,6 +104,8 @@
         var nombre = document.getElementById('facturacionElecEmpresaNombre');
         if (nombre) nombre.innerText = emp ? emp.razon : 'Empresa';
         _feEmpresaRenderLista(emp ? emp.id : null);
+        // El botón "Correo" solo se muestra si la empresa activa tiene el correo configurado.
+        if (typeof _feCorreoActualizarVisibilidad === 'function') _feCorreoActualizarVisibilidad(emp);
     }
 
     // Una fila por empresa: el nombre (clic = cambiar a ella, ✓ en la activa)
@@ -210,7 +212,13 @@
         _feSetBarraInerte(false);
         fe.style.left = '0';
         requestAnimationFrame(function() {
-            requestAnimationFrame(function() { fe.classList.add('active'); });
+            requestAnimationFrame(function() {
+                fe.classList.add('active');
+                // Reubica el Centro de Notificaciones debajo de #feTopbar: el
+                // toast de bienvenida se crea antes de que esta pantalla esté
+                // activa y quedaría encima de los botones de la barra.
+                if (typeof _notifUpdatePosition === 'function') _notifUpdatePosition();
+            });
         });
         setTimeout(function() {
             if (_facturacionElecActiva.webview && _facturacionElecActiva.webview.focus) {
