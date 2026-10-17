@@ -1052,7 +1052,10 @@
         function etapa(nombre, hacer) {
             _feEnvDocEstado('Generando: ' + nombre + '...');
             return Promise.resolve().then(hacer).then(function (res) {
-                if (res && res.ok && res.path) adjuntos.push({ nombre: nombre, path: res.path });
+                if (res && res.ok && res.path) {
+                    adjuntos.push({ nombre: nombre, path: res.path });
+                    showToast(nombre + ' generado.', 'success'); // AGREGADO NUEVO — aviso por cada documento generado
+                }
                 else fallos.push(nombre + ': ' + ((res && res.error) || 'no se generó el archivo'));
             }).catch(function (err) {
                 fallos.push(nombre + ': ' + ((err && err.message) || 'error inesperado'));
@@ -1102,7 +1105,10 @@
                 });
             }).then(function (res) {
                 if (res === null || (res && res.vacio)) { omitidos.push('PDF y JSON de ventas (no hay archivos en el período)'); return; }
-                if (res && res.ok && res.path) adjuntos.push({ nombre: 'PDF y JSON de ventas (ZIP)', path: res.path });
+                if (res && res.ok && res.path) {
+                    adjuntos.push({ nombre: 'PDF y JSON de ventas (ZIP)', path: res.path });
+                    showToast('PDF y JSON de ventas (ZIP) generado.', 'success'); // AGREGADO NUEVO — aviso por cada documento generado
+                }
                 else fallos.push('PDF y JSON de ventas: ' + ((res && res.error) || 'no se generó el archivo'));
             }).catch(function (err) {
                 fallos.push('PDF y JSON de ventas: ' + ((err && err.message) || 'error inesperado'));
