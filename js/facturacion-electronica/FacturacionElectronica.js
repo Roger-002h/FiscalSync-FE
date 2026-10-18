@@ -89,6 +89,7 @@
         var emp = empresas.find(function(e) { return e.id === empresaId; });
         if (!emp) return;
 
+        _feTopSearchAplicarVisibilidad(); // AGREGADO NUEVO — respeta el ajuste de Admin
         _feActualizarEmpresaActivaUI(empresaId);
         _asegurarWebviewFacturacion(empresaId);
         _empresaGuardarUltima(empresaId); // AGREGADO NUEVO — Multiempresa: recuerda la última empresa usada
@@ -278,7 +279,9 @@
     // usuario pueda volver a entrar sin perder la sesión del portal.
     // ══════════════════════════════════════════════════════════════════
     function _ocultarFacturacionElec(idPantallaAMostrar) {
+        if (typeof _feMenuOpcCerrar === 'function') _feMenuOpcCerrar();
         var fe = document.getElementById('facturacionElectronicaScreen');
+        if (typeof _feTopSearchCerrar === 'function') _feTopSearchCerrar(true);
         // Soltar cualquier foco que el <webview> todavía tuviera retenido
         // ANTES de empezar a ocultarlo — si el foco se queda "atrapado"
         // dentro del webview, los clics posteriores en la otra pantalla
@@ -530,6 +533,8 @@
         if (typeof _feConfigCerrarDropdown === 'function') _feConfigCerrarDropdown();
         if (typeof _feCorreoCerrarDropdown === 'function') _feCorreoCerrarDropdown();
         if (typeof _feBusquedaRapidaCerrar === 'function') _feBusquedaRapidaCerrar();
+        if (typeof _feMenuOpcCerrar === 'function') _feMenuOpcCerrar();
+        if (typeof _feTopSearchCerrar === 'function') _feTopSearchCerrar(true);
         if (typeof _feCorreoCancelarProcesando === 'function') _feCorreoCancelarProcesando();
         var _selTipoRep = document.getElementById('feRepTipoSelect');
         if (typeof _feReportesElegirTipo === 'function' && _selTipoRep) _feReportesElegirTipo(_selTipoRep.value);
@@ -1115,3 +1120,279 @@
             _feBusquedaRapidaAbrir();
         }
     });
+
+    // ── Búsqueda rápida de clientes en la barra superior (#feTopbar) ─────
+    // AGREGADO NUEVO: tercera vía para rellenar el formulario de Hacienda,
+    // además de Clientes → "Llenar" y del atajo Ctrl+B. NO reemplaza ni
+    // modifica ninguna de las dos: reutiliza tal cual _feClientesCache /
+    // _feClientesCargar (misma lista de clientes), _feDetectarModoPorUrlWebview
+    // y _feModosDe (mismo criterio de habilitación por tipo de documento) y
+    // _feClientesLlenar (el llenado real, que ya solo completa los campos
+    // que existen en el formulario abierto en ese momento). Aquí únicamente
+    // se agrega el campo de la barra, el filtrado y la lista desplegable.
+    // No usa ventana flotante propia ni toca main.js/preload.js.
+    var _feTopSearchSeleccionables = []; // índices (en _feClientesCache) de las filas habilitadas
+    var _feTopSearchSel = -1;            // posición resaltada dentro de _feTopSearchSeleccionables
+
+    // Minúsculas y sin tildes, para que "perez" encuentre "Pérez".
+    function _feTopSearchNorm(s) {
+        return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    }
+    // Solo letras/dígitos: "0614-150263-101-2" y "06141502631012" coinciden.
+    function _feTopSearchCompacto(s) {
+        return _feTopSearchNorm(s).replace(/[^a-z0-9]/g, '');
+    }
+
+    // Reúne nombre, razón social/nombre comercial y números (NIT/DUI/NRC)
+    // del cliente, tanto los planos como los de cada tipo de documento
+    // (c.porModo), para que se pueda encontrar por cualquiera de ellos.
+    function _feTopSearchDatosBuscables(c) {
+        var textos = [c.nom, c.nomCom];
+        var numeros = [c.num, c.nitCcf, c.nrc];
+        if (c.porModo) {
+            Object.keys(c.porModo).forEach(function(m) {
+                var d = c.porModo[m] || {};
+                textos.push(d.nomCom);
+                numeros.push(d.num, d.nitCcf, d.nrc);
+            });
+        }
+        return {
+            texto: _feTopSearchNorm(textos.filter(Boolean).join(' | ')),
+            numeros: numeros.filter(Boolean).map(_feTopSearchCompacto)
+        };
+    }
+
+    function _feTopSearchCoincide(c, qTexto, qCompacto) {
+        var d = _feTopSearchDatosBuscables(c);
+        if (d.texto.indexOf(qTexto) !== -1) return true;
+        if (!qCompacto) return false;
+        return d.numeros.some(function(n) { return n.indexOf(qCompacto) !== -1; });
+    }
+
+    function _feTopSearchCerrar(limpiar) {
+        var box = document.getElementById('feTopSearchResults');
+        if (box) { box.classList.remove('open'); }
+        _feTopSearchSeleccionables = [];
+        _feTopSearchSel = -1;
+        if (limpiar) {
+            var input = document.getElementById('feTopSearchInput');
+            if (input) input.value = '';
+            if (box) box.innerHTML = '';
+        }
+    }
+
+    function _feTopSearchResaltar() {
+        var box = document.getElementById('feTopSearchResults');
+        if (!box) return;
+        var filas = box.querySelectorAll('.fe-ts-item');
+        var idxSel = _feTopSearchSeleccionables[_feTopSearchSel];
+        for (var i = 0; i < filas.length; i++) {
+            var esSel = idxSel !== undefined && filas[i].getAttribute('data-idx') === String(idxSel);
+            filas[i].classList.toggle('sel', esSel);
+            if (esSel && filas[i].scrollIntoView) filas[i].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function _feTopSearchRender() {
+        var input = document.getElementById('feTopSearchInput');
+        var box = document.getElementById('feTopSearchResults');
+        if (!input || !box) return;
+        var q = input.value.trim();
+        if (!q) { _feTopSearchCerrar(false); box.innerHTML = ''; return; }
+
+        var qTexto = _feTopSearchNorm(q);
+        var qCompacto = _feTopSearchCompacto(q);
+        var modoActual = _feDetectarModoPorUrlWebview();
+        var tipoActual = modoActual ? (FE_TIPOS_DOC[modoActual] || { label: modoActual, color: '#22C55E' }) : null;
+
+        var vis = (_feClientesCache || []).filter(function(c) {
+            return _feTopSearchCoincide(c, qTexto, qCompacto);
+        });
+        // Primero los que empiezan por lo escrito (por nombre); luego el resto.
+        vis.sort(function(a, b) {
+            var ea = _feTopSearchNorm(a.nom).indexOf(qTexto) === 0 ? 0 : 1;
+            var eb = _feTopSearchNorm(b.nom).indexOf(qTexto) === 0 ? 0 : 1;
+            return ea - eb;
+        });
+
+        _feTopSearchSeleccionables = [];
+        _feTopSearchSel = -1;
+
+        if (!vis.length) {
+            box.innerHTML = '<div class="fe-ts-empty">No se encontraron clientes</div>';
+            box.classList.add('open');
+            return;
+        }
+
+        box.innerHTML = vis.slice(0, 100).map(function(c) {
+            var idx = _feClientesCache.indexOf(c);
+            var habilitado = !!modoActual && _feModosDe(c).indexOf(modoActual) !== -1;
+            if (habilitado) _feTopSearchSeleccionables.push(idx);
+            var datos = (modoActual && c.porModo && c.porModo[modoActual]) ? c.porModo[modoActual] : c;
+            var tDoc = datos.tDoc || c.tDoc || '';
+            var etiquetaDoc = tDoc === '36' ? 'NIT' : (tDoc === '13' ? 'DUI' : tDoc);
+            var numero = datos.num || c.num || '';
+            var sub = (etiquetaDoc ? etiquetaDoc + ': ' : '') + numero;
+            var titulo = !modoActual
+                ? 'Abre una pantalla de Hacienda (Factura, CCF, FSE o Nota de Crédito) para rellenar'
+                : (habilitado ? '' : 'Este cliente no tiene habilitado ' + tipoActual.label);
+            var tag = habilitado
+                ? '<span class="fe-ts-tag" style="background:' + tipoActual.color + ';">' + escHtml(tipoActual.label) + '</span>'
+                : '';
+            return '<div class="fe-ts-item' + (habilitado ? '' : ' off') + '" data-idx="' + idx + '"' +
+                (titulo ? ' title="' + escHtml(titulo) + '"' : '') +
+                (habilitado ? ' onclick="_feTopSearchElegir(' + idx + ')"' : '') + '>' +
+                '<div style="min-width:0;">' +
+                    '<div class="fe-ts-nom">' + escHtml(c.nom || '(sin nombre)') + '</div>' +
+                    '<div class="fe-ts-sub">' + escHtml(sub) + (habilitado || !modoActual ? '' : ' · no habilitado aquí') + '</div>' +
+                '</div>' + tag +
+            '</div>';
+        }).join('');
+        box.classList.add('open');
+    }
+
+    // Al enfocar el campo se refresca la lista de clientes (misma carga que
+    // usan el panel de Clientes y Ctrl+B) y se cierra el panel de Ctrl+B para
+    // no tener dos buscadores abiertos a la vez.
+    function _feTopSearchAlEnfocar() {
+        if (!_facturacionElecActiva || !_facturacionElecActiva.empresaId) return;
+        if (typeof _feBusquedaRapidaCerrar === 'function') _feBusquedaRapidaCerrar();
+        _feClientesCargar();
+        var input = document.getElementById('feTopSearchInput');
+        if (input && input.value.trim()) setTimeout(_feTopSearchRender, 150);
+    }
+
+    function _feTopSearchAlEscribir() {
+        // Si todavía no se había cargado la lista de clientes, se pide y se
+        // vuelve a pintar apenas llegue (la carga es asíncrona).
+        if (!(_feClientesCache || []).length) {
+            _feClientesCargar();
+            setTimeout(_feTopSearchRender, 250);
+        }
+        _feTopSearchRender();
+    }
+
+    function _feTopSearchTecla(e) {
+        var n = _feTopSearchSeleccionables.length;
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            _feTopSearchCerrar(false);
+            e.target.blur();
+        } else if (e.key === 'ArrowDown' && n) {
+            e.preventDefault();
+            _feTopSearchSel = (_feTopSearchSel + 1) % n;
+            _feTopSearchResaltar();
+        } else if (e.key === 'ArrowUp' && n) {
+            e.preventDefault();
+            _feTopSearchSel = (_feTopSearchSel - 1 + n) % n;
+            _feTopSearchResaltar();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            // Con una sola opción habilitada, Enter la elige directamente.
+            var pos = _feTopSearchSel >= 0 ? _feTopSearchSel : (n === 1 ? 0 : -1);
+            if (pos >= 0) _feTopSearchElegir(_feTopSearchSeleccionables[pos]);
+        }
+    }
+
+    function _feTopSearchElegir(idx) {
+        var c = (_feClientesCache || [])[idx];
+        var modo = _feDetectarModoPorUrlWebview();
+        // Revalida: el usuario pudo cambiar de documento después de buscar.
+        if (!c || !modo || _feModosDe(c).indexOf(modo) === -1) { _feTopSearchRender(); return; }
+        _feClientesLlenar(idx);       // misma función que "Llenar" y Ctrl+B
+        _feTopSearchCerrar(true);
+        var input = document.getElementById('feTopSearchInput');
+        if (input) input.blur();
+    }
+
+    // Cierra la lista al hacer clic fuera del campo (el texto escrito se
+    // conserva; al volver a enfocar se vuelve a mostrar).
+    document.addEventListener('click', function(e) {
+        var wrap = document.getElementById('feTopSearch');
+        if (!wrap || wrap.contains(e.target)) return;
+        var box = document.getElementById('feTopSearchResults');
+        if (box && box.classList.contains('open')) _feTopSearchCerrar(false);
+    });
+
+    // ── Menú de opciones (⋮) de la barra superior ───────────────────────
+    // AGREGADO NUEVO: reemplaza los botones visibles "Cerrar sesión" y
+    // "Recargar". Cada opción ejecuta la MISMA función que ejecutaba su
+    // botón (logout / _recargarWebviewFacturacion), con sus confirmaciones.
+    function _feMenuOpcCerrar() {
+        var l = document.getElementById('feMenuOpcLista');
+        var b = document.getElementById('btnFeMenuOpc');
+        if (l) l.classList.remove('open');
+        if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function _feMenuOpcToggle(ev) {
+        if (ev) ev.stopPropagation();
+        var l = document.getElementById('feMenuOpcLista');
+        var b = document.getElementById('btnFeMenuOpc');
+        if (!l) return;
+        if (l.classList.contains('open')) { _feMenuOpcCerrar(); return; }
+        l.classList.add('open');
+        if (b) b.setAttribute('aria-expanded', 'true');
+        // Evita que el menú se salga de la ventana por la derecha.
+        l.style.left = '0px';
+        var r = l.getBoundingClientRect();
+        if (r.right > window.innerWidth - 8) l.style.left = (window.innerWidth - 8 - r.right) + 'px';
+    }
+    function _feMenuOpcEjecutar(accion) {
+        _feMenuOpcCerrar();
+        if (accion === 'recargar') _recargarWebviewFacturacion();
+        else if (accion === 'logout') logout();
+        else if (accion === 'admin') {
+            // Mismo acceso que el "⚙ Admin" de la pantalla de login: abre el
+            // panel de administración (openAdminPanel, Admin.js), que sigue
+            // pidiendo la contraseña de admin antes de mostrar nada.
+            // Se suelta el foco del <webview> para que el teclado llegue al modal.
+            try {
+                if (_facturacionElecActiva.webview && _facturacionElecActiva.webview.blur) _facturacionElecActiva.webview.blur();
+                if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            } catch (e) {}
+            if (typeof openAdminPanel === 'function') openAdminPanel();
+        }
+    }
+    document.addEventListener('click', function(e) {
+        var w = document.getElementById('feMenuOpc');
+        if (w && !w.contains(e.target)) _feMenuOpcCerrar();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') _feMenuOpcCerrar();
+    });
+
+    // ── Admin: mostrar u ocultar la barra "Buscar cliente" ───────────────
+    // AGREGADO NUEVO: ajuste general (no por empresa) guardado con fsStore,
+    // el mismo almacenamiento que usa el resto de la app. Por defecto la
+    // barra está visible; solo se oculta si Admin la desactiva. Ocultarla
+    // no toca Ctrl+B ni el apartado Clientes.
+    var FE_TOPSEARCH_KEY = 'fe_busqueda_clientes_barra';
+
+    function _feTopSearchHabilitada() {
+        try {
+            var raw = fsStore.getItem(FE_TOPSEARCH_KEY);
+            if (raw === null || raw === undefined) return true;
+            var v = JSON.parse(raw);
+            return !(v === false || (v && v.activo === false));
+        } catch (e) { return true; }
+    }
+
+    function _feTopSearchAplicarVisibilidad() {
+        var on = _feTopSearchHabilitada();
+        var wrap = document.getElementById('feTopSearch');
+        if (wrap) wrap.style.display = on ? '' : 'none';
+        if (!on && typeof _feTopSearchCerrar === 'function') _feTopSearchCerrar(true);
+        var sw = document.getElementById('adminFeBusquedaToggle');
+        if (sw) { sw.classList.toggle('on', on); sw.setAttribute('aria-checked', on ? 'true' : 'false'); }
+    }
+
+    function _feTopSearchToggleAdmin() {
+        var nuevo = !_feTopSearchHabilitada();
+        try {
+            fsStore.setItem(FE_TOPSEARCH_KEY, { activo: nuevo });
+            if (fsStore.flushNow) fsStore.flushNow();
+        } catch (e) {}
+        _feTopSearchAplicarVisibilidad();
+    }
+
+    _feTopSearchAplicarVisibilidad();

@@ -226,7 +226,7 @@ function _feIntentarClickDescargarPdf(childWindow, intentosRestantes) {
 
 function createWindow() {
   const appVersion = app.getVersion() || '';
-  const winTitle = 'FiscalSync FE' + (appVersion ? ' | Versión ' + appVersion : '');
+  const winTitle = 'FiscalSync - Facturación Electrónica' + (appVersion ? ' | Versión ' + appVersion : '');
 
   const win = new BrowserWindow({
     width: 1200,
