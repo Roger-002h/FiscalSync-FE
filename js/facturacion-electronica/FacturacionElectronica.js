@@ -147,6 +147,14 @@
             fila.appendChild(ed);
             lista.appendChild(fila);
         });
+        // Límite de empresas: al alcanzarlo, «Agregar empresa» se sustituye
+        // por el aviso «Límite de Empresas Alcanzado» (solo visual; la
+        // validación real sigue en agregarEmpresaFE() y saveEmpresa()).
+        var btnAdd = document.querySelector('#feEmpresaDropdown .fe-emp-add');
+        var msgLim = document.getElementById('feEmpresaLimiteMsg');
+        var _limAlc = _empresasLimiteAlcanzado();
+        if (btnAdd) btnAdd.style.display = _limAlc ? 'none' : '';
+        if (msgLim) msgLim.style.display = _limAlc ? 'flex' : 'none';
     }
 
     function _feEmpresaEditar(empresaId) {
@@ -162,6 +170,7 @@
         if (dd.classList.contains('open')) {
             _feEmpresaCerrarDropdown();
         } else {
+            _feMenuOpcCerrar(); // exclusión mutua con el menú ⋮
             _feEmpresaRenderLista(_facturacionElecActiva && _facturacionElecActiva.empresaId);
             dd.classList.add('open');
         }
@@ -1330,6 +1339,7 @@
         var b = document.getElementById('btnFeMenuOpc');
         if (!l) return;
         if (l.classList.contains('open')) { _feMenuOpcCerrar(); return; }
+        _feEmpresaCerrarDropdown(); // exclusión mutua con el selector de empresas
         l.classList.add('open');
         if (b) b.setAttribute('aria-expanded', 'true');
         // Evita que el menú se salga de la ventana por la derecha.

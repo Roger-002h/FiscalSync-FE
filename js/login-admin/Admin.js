@@ -252,6 +252,22 @@
             var login = document.getElementById('loginScreen');
             if (login) login.classList.remove('hidden');
         }
+        // Cierre completo de la sesión de trabajo: cierra modales abiertos y,
+        // una vez terminado el fundido, destruye el <webview> de Hacienda y
+        // reinicia el estado de FE (_destruirWebviewFacturacion). Las cookies
+        // del portal viven en su partición persist:, que NO se borra, y los
+        // datos permanentes (empresas, documentos, configuración) no se tocan.
+        try {
+            closeAdminPanel();
+            document.querySelectorAll('.modal-overlay.modal-open').forEach(function(m) {
+                if (typeof _cerrarModalAnimado === 'function') _cerrarModalAnimado(m);
+            });
+        } catch (e) { console.warn('logout: no se pudieron cerrar los modales', e); }
+        setTimeout(function() {
+            var lg = document.getElementById('loginScreen');
+            if (lg && lg.classList.contains('hidden')) return; // ya volvió a iniciar sesión
+            if (typeof _destruirWebviewFacturacion === 'function') _destruirWebviewFacturacion();
+        }, 170);
         var login = document.getElementById('loginScreen');
         if (login) {
             login.style.opacity = '0';
@@ -269,13 +285,29 @@
 
     // ── AGREGADO NUEVO — Multiempresa: límite de empresas (Sistema) ──
     // Se guarda en fsStore bajo EMPRESAS_LIMITE_STORE_KEY (ver Empresas.js).
-    // Vacío = sin límite. Bajar el límite por debajo de las empresas ya
+    // Vacío = sin límite (se guarda '0'). Bajar el límite por debajo de las empresas ya
     // registradas no elimina ninguna: solo impide agregar más.
     function loadEmpresasLimiteUI() {
         var inp = document.getElementById('adminEmpresasLimite');
         if (!inp) return;
-        var lim = _empresasLimiteLeer();
-        inp.value = lim > 0 ? String(lim) : '';
+        function pintar() {
+            _empresasLimiteInicializar();
+            var lim = _empresasLimiteLeer();
+            inp.value = lim > 0 ? String(lim) : '';
+        }
+        // Espera a que las empresas estén cargadas para no fijar un límite
+        // inicial con datos a medias.
+        if (window._fiscalDataReady && typeof window._fiscalDataReady.then === 'function') {
+            window._fiscalDataReady.then(pintar);
+        } else {
+            pintar();
+        }
+    }
+
+    function _empresasLimiteRefrescarUI() {
+        if (typeof _feEmpresaRenderLista === 'function' && typeof _facturacionElecActiva !== 'undefined') {
+            _feEmpresaRenderLista(_facturacionElecActiva && _facturacionElecActiva.empresaId);
+        }
     }
 
     function guardarEmpresasLimite() {
@@ -283,8 +315,11 @@
         if (!inp) return;
         var txt = inp.value.trim();
         if (txt === '') {
-            fsStore.removeItem(EMPRESAS_LIMITE_STORE_KEY);
+            // '0' explícito = sin límite (si se borrara la clave, volvería a
+            // aplicarse el límite inicial en el siguiente arranque).
+            fsStore.setItem(EMPRESAS_LIMITE_STORE_KEY, '0');
             fsStore.flushNow();
+            _empresasLimiteRefrescarUI();
             showToast('Sin límite de empresas', 'success');
             return;
         }
@@ -295,6 +330,7 @@
         }
         fsStore.setItem(EMPRESAS_LIMITE_STORE_KEY, String(n));
         fsStore.flushNow();
+        _empresasLimiteRefrescarUI();
         showToast('Límite de empresas guardado: ' + n, 'success');
     }
 
@@ -393,7 +429,10 @@
             btnS.style.background = 'var(--rp-border)'; btnS.style.color = 'var(--rp-text-primary)';
             if (title) title.innerText = 'Sistema';
             if (box) { box.style.maxWidth = '500px'; box.style.height = ''; box.style.maxHeight = '90vh'; }
-            loadExportConfigUI(); // AGREGADO NUEVO (Cambio 03)
+            // loadExportConfigUI no existe en los archivos de este proyecto: llamarla sin
+            // comprobar lanzaba un ReferenceError que impedía llegar a loadEmpresasLimiteUI
+            // y dejaba vacía la casilla del límite al abrir Sistema.
+            if (typeof loadExportConfigUI === 'function') loadExportConfigUI(); // AGREGADO NUEVO (Cambio 03)
             loadEmpresasLimiteUI(); // AGREGADO NUEVO — Multiempresa
         } else {
             usersStep.style.display = 'flex';

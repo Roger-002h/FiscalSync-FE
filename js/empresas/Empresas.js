@@ -23,8 +23,9 @@
     // APP_VERSION, por el mismo motivo que EMPRESAS_STORE_KEY):
     //   - EMPRESA_ULTIMA_STORE_KEY: id de la última empresa con la que se
     //     entró a Facturación Electrónica (se abre esa al iniciar sesión).
-    //   - EMPRESAS_LIMITE_STORE_KEY: límite de empresas fijado desde el
-    //     panel Admin (Sistema). Vacío/inexistente = sin límite.
+    //   - EMPRESAS_LIMITE_STORE_KEY: límite de empresas. Se crea solo con
+    //     _empresasLimiteInicializar(); Admin (Sistema) lo cambia. '0' = sin
+    //     límite explícito.
     var EMPRESA_ULTIMA_STORE_KEY  = 'fs_empresaUltima';
     var EMPRESAS_LIMITE_STORE_KEY = 'fs_empresasLimite';
 
@@ -42,6 +43,20 @@
     function _empresasLimiteLeer() {
         var n = parseInt(fsStore.getItem(EMPRESAS_LIMITE_STORE_KEY), 10);
         return (n > 0) ? n : 0;
+    }
+
+    // Límite inicial: se aplica UNA sola vez, solo si todavía no existe la
+    // clave del límite (nunca configurado). Instalación nueva (sin empresas)
+    // => 1. Instalación previa con N empresas => N, para no bloquear a nadie.
+    // Un límite ya guardado NUNCA se toca (incluido '0' = sin límite, que
+    // Admin guarda de forma explícita). Debe llamarse solo cuando las
+    // empresas ya se cargaron desde disco (ver decidir() y Admin.js).
+    function _empresasLimiteInicializar() {
+        var raw = fsStore.getItem(EMPRESAS_LIMITE_STORE_KEY);
+        if (raw !== null && raw !== undefined && raw !== '') return;
+        var n = Math.max(1, _normalizarEmpresasArray(empresas).length);
+        fsStore.setItem(EMPRESAS_LIMITE_STORE_KEY, String(n));
+        fsStore.flushNow();
     }
 
     function _empresasLimiteAlcanzado() {
@@ -153,6 +168,7 @@
     function _iniciarFlujoPostLogin() {
         function decidir() {
             empresas = _normalizarEmpresasArray(empresas);
+            _empresasLimiteInicializar();
             console.log('[FiscalSync FE][diagnóstico-empresas] decidir() ejecutándose. empresas.length =', empresas.length, 'empresas =', empresas);
             if (!empresas.length) {
                 console.warn('[FiscalSync FE][diagnóstico-empresas] decidir() => abriendo modal de CONFIGURAR EMPRESA.');

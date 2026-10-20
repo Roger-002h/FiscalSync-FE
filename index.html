@@ -813,6 +813,8 @@
         #feEmpresaDropdown .fe-emp-edit:hover { background: var(--rp-border); color: var(--rp-text-primary); }
         #feEmpresaDropdown .fe-emp-add { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: none; border: none; border-top: 1px solid var(--rp-border-strong); cursor: pointer; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600; color: var(--rp-text-primary); }
         #feEmpresaDropdown .fe-emp-add:hover { background: var(--rp-inset); }
+        /* Corrección 05 — aviso que sustituye a «Agregar empresa» al alcanzar el límite (mismas medidas que .fe-emp-add). */
+        #feEmpresaDropdown .fe-emp-limite { display: none; align-items: center; justify-content: center; text-align: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--rp-border-strong); font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600; color: var(--rp-text-secondary); cursor: default; user-select: none; }
         #feConfigDropdown {
             position: absolute;
             top: 10px;
@@ -1346,7 +1348,7 @@
             background: var(--rp-surface); color: var(--rp-text-primary); border-color: var(--rp-accent);
         }
         #feMenuOpcLista {
-            position: absolute; top: calc(100% + 6px); left: 0; width: 210px; max-width: calc(100vw - 24px);
+            position: absolute; top: calc(100% + 21px); /* alineado con los demás paneles: 10px de padding + 1px de borde de #feTopbar + top:10px de los paneles */ left: 0; width: 210px; max-width: calc(100vw - 24px);
             background: var(--rp-surface); border: 1px solid var(--rp-border-strong);
             border-radius: 12px; box-shadow: 0 12px 36px rgba(0,0,0,0.28); padding: 6px; z-index: 70;
             opacity: 0; visibility: hidden; transform: translateY(-4px);
@@ -4067,6 +4069,7 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
                 Agregar empresa
             </button>
+            <div id="feEmpresaLimiteMsg" class="fe-emp-limite" role="status">Límite de Empresas Alcanzado</div>
         </div>
         <div id="feReportesDropdown">
             <div class="fe-rep-header">
