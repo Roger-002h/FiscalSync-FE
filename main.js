@@ -1858,6 +1858,64 @@ ipcMain.handle('fe-ventas-buscar', async (event, params) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════
+// AGREGADO — Correo (Facturación Electrónica): sincronizar carpeta de
+// Facturación. Lista, SIN diálogo y SOLO LECTURA, los .json de la empresa
+// indicada (Facturacion/[Tipo]/[DD-MM-AAAA]/, en todos sus meses de trabajo)
+// junto con su .pdf (mismo nombre base, tolerando el sufijo " (1)").
+// Reutiliza _feVentasListarFacturacionDirs (no crea carpetas); ignora
+// "Reportes" y todo lo que no sea .json. El renderer solo envía el nombre
+// de la empresa, nunca rutas.
+// params: { empresaNombre } -> { ok, documentos: [{ jsonPath, pdfPath }] }
+// ══════════════════════════════════════════════════════════════════════
+ipcMain.handle('fe-correos-listar-documentos', async (event, params) => {
+  try {
+    const empresaNombre = params && typeof params.empresaNombre === 'string' ? params.empresaNombre.trim() : '';
+    if (!empresaNombre) return { error: 'No se recibió la empresa activa.' };
+    const normalizar = (n) => n.replace(/\.(json|pdf)$/i, '').replace(/\s*\(\d+\)$/, '').toLowerCase();
+    const documentos = [];
+
+    const tomarFecha = (fechaDir) => {
+      let files;
+      try { files = fs.readdirSync(fechaDir, { withFileTypes: true }); } catch (e) { return; }
+      const pdfs = {};
+      for (const f of files) {
+        if (f.isFile() && path.extname(f.name).toLowerCase() === '.pdf') {
+          const base = normalizar(f.name);
+          if (!pdfs[base]) pdfs[base] = [];
+          pdfs[base].push(f.name);
+        }
+      }
+      for (const f of files) {
+        if (!f.isFile() || path.extname(f.name).toLowerCase() !== '.json') continue;
+        const candidatos = pdfs[normalizar(f.name)] || [];
+        const baseExacta = f.name.slice(0, -5).toLowerCase();
+        const exacto = candidatos.find(n => n.slice(0, -4).toLowerCase() === baseExacta);
+        const pdf = exacto || candidatos[0] || '';
+        documentos.push({ jsonPath: path.join(fechaDir, f.name), pdfPath: pdf ? path.join(fechaDir, pdf) : '' });
+      }
+    };
+
+    for (const facDir of _feVentasListarFacturacionDirs(empresaNombre, 2000, 2100)) {
+      let tipos;
+      try { tipos = fs.readdirSync(facDir, { withFileTypes: true }); } catch (e) { continue; }
+      for (const tipo of tipos) {
+        if (!tipo.isDirectory() || tipo.name === 'Reportes') continue;
+        const tipoDir = path.join(facDir, tipo.name);
+        if (FE_REGEX_CARPETA_FECHA.test(tipo.name)) { tomarFecha(tipoDir); continue; } // estructura antigua sin tipo
+        let fechas;
+        try { fechas = fs.readdirSync(tipoDir, { withFileTypes: true }); } catch (e) { continue; }
+        for (const fecha of fechas) {
+          if (fecha.isDirectory() && FE_REGEX_CARPETA_FECHA.test(fecha.name)) tomarFecha(path.join(tipoDir, fecha.name));
+        }
+      }
+    }
+    return { ok: true, documentos };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
 // Paso 2: crea el .zip en [Empresa]/Facturacion/Reportes/ (mismo destino
 // silencioso de los demás reportes). Se escribe primero a ".part" y se
 // renombra al terminar, para no dejar un .zip a medias si algo falla.

@@ -97,5 +97,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // params: { pdfPath, jsonPath, mesLabel, empresaNombre, codigoBase }
     resolverAdjuntosCorreo: (params) => ipcRenderer.invoke('fe-resolver-adjuntos-correo', params),
 
+    // Lista (solo lectura, sin diálogo) los .json de la carpeta de
+    // Facturación de la empresa con su .pdf. params: { empresaNombre }
+    listarDocumentosCorreoFE: (params) => ipcRenderer.invoke('fe-correos-listar-documentos', params),
+
     isElectron: true
 });

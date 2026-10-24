@@ -309,6 +309,9 @@
         // AGREGADO NUEVO — los clics dentro del modal "Enviar Documentación" no deben cerrar Reportes DTE.
         var modalEnvio = document.getElementById('feEnvDocModal');
         if (modalEnvio && modalEnvio.contains(ev.target)) return;
+        // AGREGADO NUEVO — Agregado 01: tampoco al configurar "Tipo Op." antes de enviar la documentación.
+        var modalTipoOp = document.getElementById('feEnvDocTipoOpModal');
+        if (modalTipoOp && modalTipoOp.contains(ev.target)) return;
         panel.classList.remove('open');
     });
 
@@ -953,6 +956,8 @@
     //   - Reporte General (PDF): _feReportesGuardarGeneral.
     //   - PDF y JSON de Ventas (ZIP): fiscalAPI.buscarVentasZip /
     //       generarVentasZip (mismos dos pasos que _feVentasZipGenerar).
+    //   - Agregado 01: antes de generar, se configura "Tipo Op." de los
+    //       documentos del período (_feEnvDocConfigurarTipoOp).
     //   - Envío: electronAPI.sendEmail (el mismo canal que Correo.js) con
     //       la cuenta de correo configurada en la empresa activa.
     // Las rutas (Facturacion/Reportes de la empresa) las resuelve main.js,
@@ -1034,11 +1039,102 @@
         var anexo1Docs = _feRepDocsDelPeriodo(emp.id, ini, fin, TIPOS_ANEXO1);
         var anexo2Docs = _feRepDocsDelPeriodo(emp.id, ini, fin, TIPOS_ANEXO2);
 
-        _feEnvDocBloquear(true);
-        // Mismo aviso Bienes/Servicios que ya existe (solo aparece si hay exportaciones).
-        _feReportesResolverExportacion(anexo2Docs, function () {
-            _feEnvDocGenerar(emp, ini, fin, anexo1Docs, anexo2Docs);
+        // AGREGADO NUEVO — Agregado 01: antes de generar nada se permite configurar
+        // "Tipo Op." de los documentos del período (solo de los tipos que existen).
+        // Si el usuario cancela, no se genera ni se envía nada.
+        _feEnvDocConfigurarTipoOp(anexo1Docs, anexo2Docs, function () {
+            _feEnvDocBloquear(true);
+            // Mismo aviso Bienes/Servicios que ya existe (solo aparece si hay exportaciones).
+            _feReportesResolverExportacion(anexo2Docs, function () {
+                _feEnvDocGenerar(emp, ini, fin, anexo1Docs, anexo2Docs);
+            });
         });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // AGREGADO NUEVO — Agregado 01: configuración de "Tipo Op." dentro de
+    // "Enviar Documentación" (modal #feEnvDocTipoOpModal, index.html).
+    // Reutiliza lo mismo que "Buscar documentos": el catálogo TIPO_OP_CATALOGO,
+    // los registros de _feRepDocsDelPeriodo (el valor elegido se guarda en
+    // r.tipoOp del propio registro, que es lo que leen _feRepCsvLineaAnexo1/2)
+    // y la misma tabla (Fecha Doc., Cliente, Total, Tipo Op.). Solo se
+    // muestra la sección de los tipos que tienen documentos; si no hay
+    // ninguno, continúa de inmediato (el flujo sigue igual que antes).
+    // ══════════════════════════════════════════════════════════════════
+    function _feEnvDocTipoOpSeccion(titulo, docs) {
+        var sec = document.createElement('div');
+        sec.className = 'fe-envdoc-tipoop-sec';
+
+        var h = document.createElement('p');
+        h.className = 'fe-envdoc-tipoop-tit';
+        h.textContent = titulo + ' — ' + docs.length + ' documento(s)';
+        sec.appendChild(h);
+
+        var wrap = document.createElement('div');
+        wrap.className = 'fe-envdoc-tipoop-wrap';
+        var tabla = document.createElement('table');
+        tabla.innerHTML = '<thead><tr><th>Fecha Doc.</th><th>Cliente</th><th>Total</th><th>Tipo Op.</th></tr></thead>';
+        var tbody = document.createElement('tbody');
+
+        docs.forEach(function (r) {
+            var tr = document.createElement('tr');
+            [formatFecha(r.fecha), r.nombre || '(Consumidor Final)', fMoney(r.total)].forEach(function (txt) {
+                var td = document.createElement('td');
+                td.textContent = txt;
+                tr.appendChild(td);
+            });
+            var tdOp = document.createElement('td');
+            var sel = document.createElement('select');
+            TIPO_OP_CATALOGO.forEach(function (o) {
+                var opt = document.createElement('option');
+                opt.value = o.codigo;
+                opt.textContent = o.codigo + ' — ' + o.nombre;
+                if (o.codigo === r.tipoOp) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            sel.addEventListener('change', function () { r.tipoOp = sel.value; });
+            tdOp.appendChild(sel);
+            tr.appendChild(tdOp);
+            // Mismo desplegable propio que usa el panel de Reportes (el <select> se
+            // conserva oculto y sincronizado, por lo que el listener de arriba sigue válido).
+            _feRepMejorarSelect(sel);
+            tbody.appendChild(tr);
+        });
+
+        tabla.appendChild(tbody);
+        wrap.appendChild(tabla);
+        sec.appendChild(wrap);
+        return sec;
+    }
+
+    function _feEnvDocConfigurarTipoOp(anexo1Docs, anexo2Docs, continuar) {
+        var modal = document.getElementById('feEnvDocTipoOpModal');
+        var cuerpo = document.getElementById('feEnvDocTipoOpBody');
+        var bCancelar = document.getElementById('feEnvDocTipoOpCancelar');
+        var bContinuar = document.getElementById('feEnvDocTipoOpContinuar');
+
+        // Sin documentos de ningún tipo no hay nada que configurar.
+        if (!anexo1Docs.length && !anexo2Docs.length) { continuar(); return; }
+        if (!modal || !cuerpo || !bCancelar || !bContinuar) {
+            fsAlert('No se pudo abrir la configuración de Tipo Op. (falta #feEnvDocTipoOpModal en index.html).');
+            return;
+        }
+
+        cuerpo.innerHTML = '';
+        if (anexo1Docs.length) cuerpo.appendChild(_feEnvDocTipoOpSeccion('Crédito Fiscal', anexo1Docs));
+        if (anexo2Docs.length) cuerpo.appendChild(_feEnvDocTipoOpSeccion('Consumidor Final', anexo2Docs));
+
+        function cerrar() {
+            bCancelar.onclick = null;
+            bContinuar.onclick = null;
+            _cerrarModalAnimado(modal);
+        }
+        bCancelar.onclick = function () { cerrar(); };
+        bContinuar.onclick = function () { cerrar(); continuar(); };
+
+        modal.style.display = 'flex';
+        modal.classList.remove('modal-closing');
+        modal.classList.add('modal-open');
     }
 
     function _feEnvDocGenerar(emp, ini, fin, anexo1Docs, anexo2Docs) {
@@ -1399,6 +1495,8 @@
         _feDdCerrar();
         var menu = document.createElement('div');
         menu.className = 'fe-dd-menu';
+        // El modal de "Tipo Op." (Enviar Documentación) está por encima del panel: el menú debe quedar sobre él.
+        if (btn.closest && btn.closest('#feEnvDocTipoOpModal')) menu.style.zIndex = '10000001';
         Array.prototype.forEach.call(sel.options, function (opt) {
             var item = document.createElement('div');
             item.className = 'fe-dd-item' + (opt.value === sel.value ? ' sel' : '');

@@ -389,6 +389,48 @@
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // AGREGADO NUEVO — Agregado 02: búsqueda de documentos en el apartado
+    // Correo. Filtra SOLO lo que se muestra en la pestaña Documentos; no
+    // modifica los documentos guardados ni el envío masivo
+    // (_feCorreoEnviarTodosPendientes sigue leyendo todos los documentos).
+    // Busca únicamente en datos que el documento ya tiene guardados:
+    // nombre del cliente, número de control (numDoc), código de generación
+    // y tipo de documento (nombre y código). Ignora mayúsculas y tildes, y
+    // todas las palabras escritas deben aparecer (en cualquiera de esos
+    // campos). El envío individual es el botón "Enviar" que ya trae cada
+    // fila (correosEnviarIndividual con el índice real del documento).
+    // ═══════════════════════════════════════════════════════════════════
+    var _feCorreoFiltroTexto = '';
+
+    function _feCorreoNormalizarBusqueda(t) {
+        var s = String(t == null ? '' : t).toLowerCase();
+        try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+        return s;
+    }
+
+    function _feCorreoCoincideBusqueda(doc, consulta) {
+        var palabras = _feCorreoNormalizarBusqueda(consulta).split(/\s+/).filter(function(p) { return p; });
+        if (!palabras.length) return true;
+        var texto = _feCorreoNormalizarBusqueda([
+            doc.nombreCliente, doc.numDoc, doc.codigoGeneracion, doc.tipo, doc.tipoCodigo
+        ].join(' '));
+        return palabras.every(function(p) { return texto.indexOf(p) !== -1; });
+    }
+
+    function _feCorreoBuscarCambio(valor) {
+        _feCorreoFiltroTexto = String(valor || '');
+        var btnLimpiar = document.getElementById('feCorreoBuscarLimpiar');
+        if (btnLimpiar) btnLimpiar.style.display = _feCorreoFiltroTexto ? 'block' : 'none';
+        _feCorreoRenderLista();
+    }
+
+    function _feCorreoBuscarLimpiar() {
+        var inp = document.getElementById('feCorreoBuscar');
+        if (inp) { inp.value = ''; inp.focus(); }
+        _feCorreoBuscarCambio('');
+    }
+
     // Sección 8 — lista simplificada de documentos pendientes/recientes.
     // Muestra como mínimo Cliente/Documento/Tipo/Fecha/Correo/Estado —
     // reutilizando las MISMAS clases visuales (.correos-estado-badge,
@@ -411,11 +453,28 @@
         // al documento correcto.
         var conIdx = docs.map(function(d, i) { return { doc: d, realIdx: i }; }).reverse();
 
+        // AGREGADO NUEVO — Agregado 02: filtro de búsqueda (conserva el índice real).
+        var consultaBusq = _feCorreoFiltroTexto.trim();
+        var infoBusq = document.getElementById('feCorreoBuscarInfo');
+        if (consultaBusq) {
+            conIdx = conIdx.filter(function(item) { return _feCorreoCoincideBusqueda(item.doc, consultaBusq); });
+            if (infoBusq) infoBusq.textContent = conIdx.length + ' de ' + docs.length + ' documento(s)';
+            if (conIdx.length === 0) {
+                cont.innerHTML = '<div class="correos-empty"><p style="font-size:13px;font-weight:500;color:var(--rp-text-secondary);">Sin resultados</p>' +
+                    '<p style="font-size:11px;color:var(--rp-text-secondary);">Ningún documento coincide con la búsqueda.</p></div>';
+                return;
+            }
+        } else if (infoBusq) {
+            infoBusq.textContent = '';
+        }
+
         cont.innerHTML = conIdx.map(function(item) {
             var doc = item.doc, realIdx = item.realIdx;
             var badgeCls = doc.estado === 'enviado' ? 'enviado' : (doc.estado === 'error' ? 'error' : 'pendiente');
             var badgeTxt = doc.estado === 'enviado' ? '✓ Enviado' : (doc.estado === 'error' ? '✗ Error' : (doc.estado === 'enviando' ? '↻ Enviando…' : '⏳ Pendiente'));
-            var puedeEnviar = doc.estado !== 'enviado' && doc.estado !== 'enviando';
+            // Agregado 02: el envío individual también está disponible en documentos ya enviados ("Reenviar", con confirmación).
+            var puedeEnviar = doc.estado !== 'enviando';
+            var yaEnviado = doc.estado === 'enviado';
 
             return '<div class="fe-cor-item">' +
                 '<div class="fe-cor-item-top">' +
@@ -426,12 +485,12 @@
                     '</div>' +
                     '<span class="correos-estado-badge ' + badgeCls + '" style="white-space:nowrap;flex-shrink:0;">' + badgeTxt + '</span>' +
                 '</div>' +
-                '<input type="email" value="' + (doc.correoCliente || '') + '" placeholder="Correo del destinatario…" onblur="_feCorreoActualizarCorreoLista(' + realIdx + ',this.value)">' +
+                '<input type="email" id="feCorreoInp_' + realIdx + '" value="' + (doc.correoCliente || '') + '" placeholder="Correo del destinatario…" onblur="_feCorreoActualizarCorreoLista(' + realIdx + ',this.value)">' +
                 '<div class="fe-cor-item-actions">' +
                     (puedeEnviar
-                        ? '<button onclick="_feCorreoEnviarDesdeLista(' + realIdx + ')" class="correos-action-btn primary" style="flex:1;padding:6px 10px;font-size:11px;">Enviar</button>'
+                        ? '<button onclick="_feCorreoEnviarDesdeLista(' + realIdx + ')" class="correos-action-btn primary" style="flex:1;padding:6px 10px;font-size:11px;justify-content:center;text-align:center;">' + (yaEnviado ? 'Reenviar' : 'Enviar') + '</button>'
                         : '') +
-                    '<button onclick="correosEliminarDoc(' + realIdx + ')" class="correos-action-btn secondary" style="flex:1;padding:6px 10px;font-size:11px;">Quitar de la lista</button>' +
+                    '<button onclick="correosEliminarDoc(' + realIdx + ')" class="correos-action-btn secondary" style="flex:1;padding:6px 10px;font-size:11px;justify-content:center;text-align:center;">Quitar de la lista</button>' +
                 '</div>' +
             '</div>';
         }).join('');
@@ -449,6 +508,29 @@
     // correosEnviarIndividual() (SMTP, plantilla e historial 100%
     // existentes, ver Sección 6/9/17 del pedido).
     function _feCorreoEnviarDesdeLista(idx) {
+        // Agregado 02: se toma el correo tal como está escrito en la fila (aunque
+        // aún no se haya salido del campo), se guarda y se valida antes de enviar.
+        var inp = document.getElementById('feCorreoInp_' + idx);
+        if (inp) correosActualizarCorreo(idx, inp.value);
+        var doc = _correosLoadDocs()[idx];
+        if (!doc) { showToast('No se encontró el documento en la lista.', 'error'); return; }
+        if (!doc.correoCliente) {
+            showToast('Escribe el correo del destinatario en la fila de este documento y vuelve a presionar el botón.', 'error');
+            if (inp) inp.focus();
+            return;
+        }
+        if (!/^[^\s@,;<>"']+@[^\s@,;<>"']+\.[^\s@,;<>"']+$/.test(doc.correoCliente)) {
+            showToast('El correo del destinatario no es válido: ' + doc.correoCliente, 'error');
+            if (inp) inp.focus();
+            return;
+        }
+        // Agregado 02: si ya fue enviado, se confirma antes de volver a enviarlo.
+        if (doc && doc.estado === 'enviado') {
+            fsConfirm('¿Reenviar documento?\nEste documento ya fue enviado a ' + (doc.correoCliente || 'su destinatario') + '. ¿Deseas enviarlo de nuevo?', function() {
+                correosEnviarIndividual(idx);
+            });
+            return;
+        }
         correosEnviarIndividual(idx);
     }
 
@@ -465,6 +547,15 @@
         var btnHist = document.getElementById('feCorreoTabHistBtn');
         if (btnDocs) { btnDocs.style.background = tab === 'docs' ? 'var(--rp-indigo)' : ''; btnDocs.style.color = tab === 'docs' ? '#fff' : ''; btnDocs.style.borderColor = tab === 'docs' ? 'transparent' : ''; }
         if (btnHist) { btnHist.style.background = tab === 'hist' ? 'var(--rp-indigo)' : ''; btnHist.style.color = tab === 'hist' ? '#fff' : ''; btnHist.style.borderColor = tab === 'hist' ? 'transparent' : ''; }
+        // AGREGADO NUEVO — Agregado 02: la búsqueda solo aplica a la pestaña Documentos.
+        var busqWrap = document.getElementById('feCorreoBuscarWrap');
+        if (busqWrap) busqWrap.style.display = tab === 'hist' ? 'none' : '';
+        // Botones de acción según la pestaña: Documentos → Enviar pendientes
+        // (+ Sincronizar); Historial reciente → Borrar historial (+ Sincronizar).
+        var btnEnviar  = document.getElementById('feCorreoEnviarBtn');
+        var btnLimpiar = document.getElementById('feCorreoLimpiarBtn');
+        if (btnEnviar)  btnEnviar.style.display  = tab === 'hist' ? 'none' : '';
+        if (btnLimpiar) btnLimpiar.style.display = tab === 'hist' ? '' : 'none';
         if (tab === 'hist') _feCorreoRenderHistBreve();
         else _feCorreoRenderLista();
     }
@@ -600,6 +691,132 @@
             _feCorreoActualizarStats();
             _feCorreoRefreshActiveTab();
         }, 600);
+    }
+
+    // AGREGADO — Sincroniza los documentos de la carpeta de Facturación de
+    // la empresa activa (botón de carpeta del panel Correo), SIN diálogo de
+    // carpeta. main.js (fe-correos-listar-documentos) lista los .json de
+    // Facturacion/[Tipo]/[DD-MM-AAAA]/ con su .pdf; aquí se leen con el mismo
+    // readJson que ya usa _feCorreoProcesarDocumentoListo y se arman con
+    // _correosExtraerDocumento. Un documento que ya está en la lista (cualquier
+    // estado) no se duplica: solo se completan sus adjuntos. Uno que no está
+    // en la lista pero tiene un envío exitoso en el historial se cuenta como
+    // "ya enviado" y no se carga. El resto entra como 'pendiente'.
+    // La mezcla y el guardado se hacen una sola vez al final, recargando la
+    // lista, para no pisar cambios hechos mientras se leían los archivos.
+    var _feCorreoSincronizando = false;
+
+    function _feCorreoSincronizarFacturacion() {
+        if (_feCorreoSincronizando) return;
+        if (!window.electronAPI || !window.electronAPI.listarDocumentosCorreoFE || !window.electronAPI.readJson) {
+            showToast('No se detectó canal Electron. Verifica preload.js y reinicia la app.', 'error');
+            return;
+        }
+        var emp = _correosGetEmpresaActiva();
+        if (!emp || !emp.razon) { showToast('No se pudo determinar la empresa activa.', 'error'); return; }
+        var empresaId = _correosContextoActivo().empresaId;
+
+        _feCorreoSincronizando = true;
+        var btn = document.getElementById('feCorreoSyncBtn');
+        if (btn) btn.disabled = true;
+        function terminar() {
+            _feCorreoSincronizando = false;
+            if (btn) btn.disabled = false;
+        }
+
+        window.electronAPI.listarDocumentosCorreoFE({ empresaNombre: emp.razon }).then(function(res) {
+            if (!res || res.error) {
+                showToast('No se pudo leer la carpeta de Facturación' + (res && res.error ? ': ' + res.error : '.'), 'error');
+                terminar();
+                return;
+            }
+            var archivos = res.documentos || [];
+            if (archivos.length === 0) {
+                showToast('No se encontraron documentos en la carpeta de Facturación de esta empresa.', 'info');
+                terminar();
+                return;
+            }
+
+            showToast('Sincronizando ' + archivos.length + ' documento(s)…', 'info');
+
+            // Fase 1: leer cada .json (uno por vez) y armar el documento.
+            var leidos = [];
+            function leerSiguiente(i) {
+                if (i >= archivos.length) { aplicar(); return; }
+                var jsonPath = archivos[i].jsonPath;
+                var pdfPath  = archivos[i].pdfPath || '';
+                var sep        = jsonPath.indexOf('\\') > -1 ? '\\' : '/';
+                var fileName   = jsonPath.substring(jsonPath.lastIndexOf(sep) + 1);
+                var folderPath = jsonPath.substring(0, jsonPath.lastIndexOf(sep));
+                window.electronAPI.readJson(folderPath, fileName).then(function(json) {
+                    if (json && !json.error) {
+                        var doc = _correosExtraerDocumento(json, fileName);
+                        // Sin tipoDte no es un documento emitido (por ejemplo, un evento de invalidación).
+                        if (doc && doc.numDoc && doc.tipoCodigo) {
+                            doc.jsonPath = jsonPath;
+                            doc.pdfPath  = pdfPath;
+                            leidos.push(doc);
+                        }
+                    }
+                }).catch(function() { /* JSON ilegible: se omite */ }).then(function() {
+                    leerSiguiente(i + 1);
+                });
+            }
+
+            // Fase 2: mezclar con la lista y el historial actuales y guardar una vez.
+            function aplicar() {
+                try {
+                    if (_correosContextoActivo().empresaId !== empresaId) {
+                        showToast('La empresa activa cambió durante la sincronización. Vuelve a intentarlo.', 'error');
+                        return;
+                    }
+                    var docs = _correosLoadDocs();
+                    var hist = _correosLoadHist();
+                    var enviadosHist = {};
+                    hist.forEach(function(h) { if (h && h.ok && h.documento) enviadosHist[h.documento] = true; });
+
+                    var cargados = 0, yaEnviados = 0, yaEnLista = 0, sinPdf = 0, cambio = false;
+                    var vistos = {}; // mismo numDoc repetido en varias carpetas: se cuenta una sola vez
+
+                    leidos.forEach(function(doc) {
+                        if (vistos[doc.numDoc]) return;
+                        vistos[doc.numDoc] = true;
+
+                        var existente = docs.find(function(d) { return d.numDoc === doc.numDoc; });
+                        if (existente) {
+                            yaEnLista++;
+                            if (!existente.jsonPath && doc.jsonPath) { existente.jsonPath = doc.jsonPath; cambio = true; }
+                            if (!existente.pdfPath  && doc.pdfPath)  { existente.pdfPath  = doc.pdfPath;  cambio = true; }
+                            if (!existente.codigoGeneracion && doc.codigoGeneracion) { existente.codigoGeneracion = doc.codigoGeneracion; cambio = true; }
+                            return;
+                        }
+                        if (enviadosHist[doc.numDoc]) { yaEnviados++; return; }
+
+                        doc.estado = 'pendiente';
+                        docs.push(doc);
+                        cargados++;
+                        if (!doc.pdfPath) sinPdf++;
+                    });
+
+                    if (cargados > 0 || cambio) _correosSaveDocs(docs);
+                    _feCorreoActualizarStats();
+                    _feCorreoRefreshActiveTab();
+
+                    var msg = cargados + ' cargados, ' + yaEnviados + ' ya enviados, ' + yaEnLista + ' ya estaban en la lista';
+                    if (sinPdf > 0) msg += ' (' + sinPdf + ' sin PDF: falta el archivo .pdf)';
+                    showToast(msg, cargados > 0 ? 'success' : 'info');
+                } catch (e) {
+                    showToast('Error al sincronizar: ' + e.message, 'error');
+                } finally {
+                    terminar();
+                }
+            }
+
+            leerSiguiente(0);
+        }).catch(function(e) {
+            showToast('No se pudo leer la carpeta de Facturación: ' + (e && e.message ? e.message : e), 'error');
+            terminar();
+        });
     }
 
     // Envía todos los documentos pendientes uno por uno, reutilizando tal

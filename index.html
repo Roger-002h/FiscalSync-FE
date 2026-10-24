@@ -692,6 +692,26 @@
             width: auto;
             max-width: 230px;
         }
+        /* AGREGADO NUEVO — Agregado 01: tablas de "Tipo Op." del modal #feEnvDocTipoOpModal
+           (las reglas de #feReportesDropdown no aplican porque el modal está fuera del panel). */
+        #feEnvDocTipoOpModal .fe-envdoc-tipoop-sec { margin-bottom: 14px; }
+        #feEnvDocTipoOpModal .fe-envdoc-tipoop-tit { font-size: 11px; font-weight: 700; color: var(--rp-text-primary); margin: 0 0 6px 0; }
+        #feEnvDocTipoOpModal .fe-envdoc-tipoop-wrap { overflow-x: auto; border: 1px solid var(--rp-border); border-radius: 8px; }
+        #feEnvDocTipoOpModal table { width: 100%; border-collapse: collapse; font-size: 11px; color: var(--rp-text-primary); }
+        #feEnvDocTipoOpModal th, #feEnvDocTipoOpModal td { padding: 5px 6px; border-bottom: 1px solid var(--rp-border); text-align: left; white-space: nowrap; }
+        #feEnvDocTipoOpModal th { position: sticky; top: 0; background: var(--rp-inset); color: var(--rp-text-secondary); font-weight: 600; }
+        #feEnvDocTipoOpModal .fe-dd-btn {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            margin: 0; padding: 3px 6px; box-sizing: border-box; width: auto; max-width: 230px;
+            border: 1px solid var(--rp-border-strong); border-radius: 6px;
+            background: var(--rp-surface); color: var(--rp-text-primary);
+            font-size: 10.5px; font-family: inherit; text-align: left; cursor: pointer;
+            transition: border-color .15s;
+        }
+        #feEnvDocTipoOpModal .fe-dd-btn:hover, #feEnvDocTipoOpModal .fe-dd-btn.open { border-color: var(--rp-accent); }
+        #feEnvDocTipoOpModal .fe-dd-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #feEnvDocTipoOpModal .fe-dd-btn svg { flex-shrink: 0; color: var(--rp-text-secondary); transition: transform .15s; }
+        #feEnvDocTipoOpModal .fe-dd-btn.open svg { transform: rotate(180deg); }
         /* Reportes — desplegables con el mismo diseño del programa.
            El background abreviado de la regla "input, select" de este panel
            borraba la flecha del select; se restaura aquí, y se declara
@@ -1206,6 +1226,8 @@
             letter-spacing: .06em;
             color: var(--rp-text-secondary);
         }
+        /* Agregado 02: la línea "N de M documento(s)" no ocupa espacio mientras no hay búsqueda. */
+        #feCorreoBuscarInfo:empty { display: none; }
         #feCorreoDropdown .fe-cor-body {
             padding: 10px 14px 14px;
             overflow-y: auto;
@@ -4176,6 +4198,26 @@
             </div>
         </div>
 
+        <!-- AGREGADO NUEVO — Agregado 01: Reportes DTE → "Enviar Documentación": modal para
+             configurar la columna "Tipo Op." ANTES de generar los anexos (ver
+             _feEnvDocConfigurarTipoOp en FEReportes.js). Las secciones (Crédito Fiscal /
+             Consumidor Final) se arman por JS solo para los tipos que tienen documentos.
+             Mismo patrón visual que #feEnvDocModal. -->
+        <div id="feEnvDocTipoOpModal" class="modal-overlay" style="display:none;position:fixed;inset:0;z-index:9999999;align-items:center;justify-content:center;padding:16px;">
+            <div style="background:var(--rp-inset);border:1px solid var(--rp-border-strong);border-radius:20px;width:100%;max-width:640px;box-shadow:0 0 0 1px rgba(255,255,255,0.04),0 24px 64px rgba(0,0,0,0.8);overflow:hidden;">
+                <div style="padding:24px 28px 0 28px;">
+                    <p style="font-size:14px;font-weight:600;color:var(--rp-text-heading);margin:0 0 4px 0;">Configurar Tipo Op.</p>
+                    <p style="font-size:12px;color:var(--rp-text-secondary);line-height:1.6;margin:0;">Revisa el Tipo de Operación de las ventas del período antes de generar los anexos.</p>
+                    <div id="feEnvDocTipoOpBody" style="margin-top:12px;max-height:50vh;overflow-y:auto;"></div>
+                </div>
+                <div style="height:1px;background:var(--rp-border-strong);margin:20px 0;"></div>
+                <div style="padding:0 28px 24px 28px;display:flex;justify-content:flex-end;gap:8px;">
+                    <button id="feEnvDocTipoOpCancelar" style="padding:8px 18px;background:transparent;color:var(--rp-text-secondary);font-size:11px;font-weight:600;border:1px solid var(--rp-border-strong);border-radius:9px;cursor:pointer;">Cancelar</button>
+                    <button id="feEnvDocTipoOpContinuar" style="padding:8px 18px;background:var(--rp-accent);color:#fff;font-size:11px;font-weight:700;border:none;border-radius:9px;cursor:pointer;">Continuar</button>
+                </div>
+            </div>
+        </div>
+
         <div id="feConfigDropdown">
             <div class="fe-cfg-header">
                 <strong style="font-size:13px;color:var(--rp-text-primary);">Configuración</strong>
@@ -4554,14 +4596,30 @@
                  pasó de botón con texto en su propia fila a ícono, y se
                  unió a la fila de Documentos / Historial reciente / Borrar
                  para dejar el apartado más limpio. -->
+            <!-- AGREGADO NUEVO — Agregado 02: barra de búsqueda de documentos (ver
+                 _feCorreoBuscarCambio en FECorreo.js). Vive en el encabezado, fuera de
+                 #feCorreoLista, para no perder el foco al refrescar la lista. -->
+            <div id="feCorreoBuscarWrap" style="margin-top:8px;">
+                <div style="position:relative;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--rp-text-secondary);pointer-events:none;"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="M21 21l-4.3-4.3"/></svg>
+                    <input type="text" id="feCorreoBuscar" autocomplete="off" placeholder="Buscar documento…" title="Busca por cliente, número de control, código de generación o tipo de documento" oninput="_feCorreoBuscarCambio(this.value)" style="width:100%;padding:7px 28px 7px 30px;border:1px solid var(--rp-border-strong);border-radius:9px;font-size:11.5px;background:var(--rp-surface);color:var(--rp-text-primary);box-sizing:border-box;font-family:inherit;">
+                    <button type="button" id="feCorreoBuscarLimpiar" onclick="_feCorreoBuscarLimpiar()" title="Limpiar búsqueda" style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--rp-text-secondary);padding:2px;line-height:0;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div id="feCorreoBuscarInfo" style="font-size:10px;color:var(--rp-text-secondary);margin-top:4px;"></div>
+            </div>
             <div style="display:flex;gap:6px;margin-top:8px;">
                 <button id="feCorreoTabDocsBtn" onclick="_feCorreoShowTab('docs')" class="correos-action-btn secondary" style="flex:1;padding:6px 8px;font-size:10.5px;">Documentos</button>
                 <button id="feCorreoTabHistBtn" onclick="_feCorreoShowTab('hist')" class="correos-action-btn secondary" style="flex:1;padding:6px 8px;font-size:10.5px;">Historial reciente</button>
-                <button onclick="_feCorreoEnviarTodosPendientes()" title="Enviar todos los documentos pendientes" class="correos-action-btn secondary" style="padding:6px 8px;flex:0 0 auto;">
+                <button id="feCorreoEnviarBtn" onclick="_feCorreoEnviarTodosPendientes()" title="Enviar todos los documentos pendientes" class="correos-action-btn secondary" style="padding:6px 8px;flex:0 0 auto;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M22 2L11 13"/><path stroke-linecap="round" stroke-linejoin="round" d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
                 </button>
-                <button onclick="_feCorreoLimpiarHistorial()" title="Vaciar historial de envíos" class="correos-action-btn secondary" style="padding:6px 8px;font-size:10.5px;flex:0 0 auto;">
+                <button id="feCorreoLimpiarBtn" onclick="_feCorreoLimpiarHistorial()" title="Vaciar historial de envíos" class="correos-action-btn secondary" style="padding:6px 8px;font-size:10.5px;flex:0 0 auto;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6h16z"/></svg>
+                </button>
+                <button id="feCorreoSyncBtn" onclick="_feCorreoSincronizarFacturacion()" title="Sincronizar documentos de la carpeta de Facturación de esta empresa (carga los que falten como pendientes)" class="correos-action-btn secondary" style="padding:6px 8px;font-size:10.5px;flex:0 0 auto;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path stroke-linecap="round" stroke-linejoin="round" d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
                 </button>
             </div>
         </div>
