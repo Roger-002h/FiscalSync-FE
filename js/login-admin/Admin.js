@@ -79,8 +79,56 @@
     // ══════════════════════════════════════════════
 
     // Credenciales base (admin siempre existe, no se puede eliminar)
+    // CORRECCIÓN DE SEGURIDAD: ya no hay claves en texto plano en el código ni
+    // en el almacenamiento. Cada usuario guarda `passHash` con el formato
+    // 'pbkdf2$<iteraciones>$<sal hex>$<hash hex>' (PBKDF2-SHA256, sal propia).
     var FS_ADMIN_USER = 'admin';
-    var FS_ADMIN_PASS_DEFAULT = 'Fiscal0215'; // Cambio 02: clave admin actualizada (antes 'fiscal2024')
+    var FS_HASH_ADMIN_DEFAULT = 'pbkdf2$100000$74113cc287d6d0d3594aae38d09909df$348fdacca6bb02e78b32531f3a5600f15fbb3a25bed9c3c9b9f0140e0e494918';
+    var FS_HASH_ROGER_DEFAULT = 'pbkdf2$100000$ace05dbd1961fcdc8aa30e787748af00$fdf404a0e237d8774742f4d6e5f2243e0179976dcea477495260a5422546212b';
+    var FS_HASH_USER_DEFAULT  = 'pbkdf2$100000$818422b23a94a4530889219e07f63385$f7edf674ed3d2c93a36a49f265488080ecf738765e42971338afc404ac9fbf77';
+    // SHA-256 de las claves antiguas, solo para reconocerlas al migrar
+    // instalaciones que aún las tengan guardadas (Cambio 02 y Cambio 03).
+    var FS_LEGACY_SHA256_ADMIN = '7ced4fae08b79d3441b95a100f402a21d71c2fa39f2f1f68a89dca3bb2a8278f';
+    var FS_LEGACY_SHA256_USER  = '20dafa8797bc35b51903018b8053bfa29b4178c1610234d452e8dca5e928f698';
+    var FS_PBKDF2_ITER = 100000;
+
+    function _fsHex(buf) {
+        return Array.prototype.map.call(new Uint8Array(buf), function(b) {
+            return ('0' + b.toString(16)).slice(-2);
+        }).join('');
+    }
+    function _fsFromHex(hex) {
+        var out = new Uint8Array(hex.length / 2);
+        for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+        return out;
+    }
+    async function _fsPbkdf2Hex(clave, saltBytes, iter) {
+        var enc = new TextEncoder();
+        var key = await crypto.subtle.importKey('raw', enc.encode(clave), 'PBKDF2', false, ['deriveBits']);
+        var bits = await crypto.subtle.deriveBits(
+            { name: 'PBKDF2', salt: saltBytes, iterations: iter, hash: 'SHA-256' }, key, 256);
+        return _fsHex(bits);
+    }
+    async function _fsSha256Hex(texto) {
+        return _fsHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto)));
+    }
+    // Crea un hash nuevo (sal aleatoria) para una clave
+    async function _fsHashClave(clave) {
+        var salt = crypto.getRandomValues(new Uint8Array(16));
+        var h = await _fsPbkdf2Hex(clave, salt, FS_PBKDF2_ITER);
+        return 'pbkdf2$' + FS_PBKDF2_ITER + '$' + _fsHex(salt) + '$' + h;
+    }
+    // Compara una clave escrita contra un passHash guardado
+    async function _fsVerificarClave(clave, passHash) {
+        if (typeof passHash !== 'string') return false;
+        var p = passHash.split('$');
+        if (p.length !== 4 || p[0] !== 'pbkdf2') return false;
+        var calc = await _fsPbkdf2Hex(clave, _fsFromHex(p[2]), parseInt(p[1], 10));
+        if (calc.length !== p[3].length) return false;
+        var diff = 0;
+        for (var i = 0; i < calc.length; i++) diff |= calc.charCodeAt(i) ^ p[3].charCodeAt(i);
+        return diff === 0;
+    }
 
     function loadFsUsers() {
         var raw = fsStore.getItem('fs_v' + APP_VERSION + '_users');
@@ -91,60 +139,68 @@
         // Si no hay datos válidos, retornar lista por defecto
         if (!users || !Array.isArray(users) || users.length === 0) {
             return [
-                { user: 'admin', pass: 'Fiscal0215', isAdmin: true }, // Cambio 02: clave admin actualizada (antes 'fiscal2024')
-                { user: 'roger', pass: '2025', isAdmin: false },
-                { user: 'user',  pass: 'User2026', isAdmin: false } // Cambio 03: clave de 'user' actualizada (antes 'FiscalSync')
+                { user: 'admin', passHash: FS_HASH_ADMIN_DEFAULT, isAdmin: true },
+                { user: 'roger', passHash: FS_HASH_ROGER_DEFAULT, isAdmin: false },
+                { user: 'user',  passHash: FS_HASH_USER_DEFAULT,  isAdmin: false }
             ];
         }
         // Garantizar que admin SIEMPRE exista en la lista cargada
         var adminExists = users.some(function(u) { return u.user === FS_ADMIN_USER; });
         var needsPersist = false;
         if (!adminExists) {
-            users.unshift({ user: FS_ADMIN_USER, pass: FS_ADMIN_PASS_DEFAULT, isAdmin: true });
+            users.unshift({ user: FS_ADMIN_USER, passHash: FS_HASH_ADMIN_DEFAULT, isAdmin: true });
             needsPersist = true;
         }
-        // AGREGADO NUEVO (Cambio 02): migración de la clave de admin para
-        // instalaciones ya existentes. Los datos de usuarios se guardan en
-        // disco (fsStore) desde la primera vez que se usó la app, así que el
-        // valor por defecto de arriba (FS_ADMIN_PASS_DEFAULT) NO alcanza a las
-        // instalaciones que ya tenían guardada la clave anterior 'fiscal2024'.
-        // Aquí se detecta ese caso puntual y se actualiza la clave del admin a
-        // 'Fiscal0215', dejando intacto el resto de usuarios y su lógica.
-        users.forEach(function(u) {
-            if (u.user === FS_ADMIN_USER && u.pass === 'fiscal2024') {
-                u.pass = FS_ADMIN_PASS_DEFAULT;
-                needsPersist = true;
-            }
-        });
-        // AGREGADO NUEVO (Cambio 03): igual que con admin arriba, garantizamos
-        // que el usuario 'user' SIEMPRE exista en instalaciones ya existentes
-        // (las que ya tenían su lista de usuarios guardada en disco antes de
-        // este cambio), y migramos su clave anterior 'FiscalSync' a 'User2026'.
+        // Garantizar que el usuario 'user' SIEMPRE exista en instalaciones
+        // ya existentes (las que guardaron su lista antes del Cambio 03).
         var userExists = users.some(function(u) { return u.user === 'user'; });
         if (!userExists) {
-            users.push({ user: 'user', pass: 'User2026', isAdmin: false });
+            users.push({ user: 'user', passHash: FS_HASH_USER_DEFAULT, isAdmin: false });
             needsPersist = true;
         }
-        users.forEach(function(u) {
-            if (u.user === 'user' && u.pass === 'FiscalSync') {
-                u.pass = 'User2026';
-                needsPersist = true;
-            }
-        });
+        // Las claves antiguas en texto plano guardadas en disco (campo `pass`)
+        // se convierten a hash en _fsMigrarClaves() al iniciar sesión.
         if (needsPersist) {
             try { fsStore.setItem('fs_v' + APP_VERSION + '_users', JSON.stringify(users)); } catch(e) {}
         }
         return users;
     }
 
+    // Migra instalaciones existentes: toda clave en texto plano (`pass`) pasa
+    // a `passHash` y el texto plano se elimina del almacenamiento. Conserva las
+    // migraciones de los Cambios 02 y 03 (clave antigua de admin y de 'user'
+    // se reemplazan por las actuales).
+    async function _fsMigrarClaves() {
+        var users = loadFsUsers();
+        var cambio = false;
+        for (var i = 0; i < users.length; i++) {
+            var u = users[i];
+            if (typeof u.pass !== 'string') continue;
+            var plano = u.pass;
+            var sha = await _fsSha256Hex(plano);
+            if (u.user === FS_ADMIN_USER && sha === FS_LEGACY_SHA256_ADMIN) {
+                u.passHash = FS_HASH_ADMIN_DEFAULT;
+            } else if (u.user === 'user' && sha === FS_LEGACY_SHA256_USER) {
+                u.passHash = FS_HASH_USER_DEFAULT;
+            } else {
+                u.passHash = await _fsHashClave(plano);
+            }
+            delete u.pass;
+            cambio = true;
+        }
+        if (cambio) {
+            try { saveFsUsers(users); } catch(e) { console.error('No se pudo guardar la migración de claves:', e); }
+        }
+    }
+
     function saveFsUsers(list) {
         fsStore.setItem('fs_v' + APP_VERSION + '_users', JSON.stringify(list));
     }
 
-    function getAdminPass() {
+    function getAdminPassHash() {
         var users = loadFsUsers();
         var adm = users.find(function(u) { return u.user === FS_ADMIN_USER; });
-        return adm ? adm.pass : FS_ADMIN_PASS_DEFAULT;
+        return adm ? adm.passHash : FS_HASH_ADMIN_DEFAULT;
     }
 
     function loginSubmit() {
@@ -173,11 +229,18 @@
         btn.disabled = true;
         btn.innerText = 'Verificando…';
 
-        setTimeout(function() {
-            var users = loadFsUsers();
-            var found = users.find(function(u) {
-                return u.user === userVal && u.pass === passVal;
-            });
+        setTimeout(async function() {
+            var found = null;
+            var errorVerif = false;
+            try {
+                await _fsMigrarClaves();
+                var users = loadFsUsers();
+                var cand = users.find(function(u) { return u.user === userVal; });
+                if (cand && await _fsVerificarClave(passVal, cand.passHash)) found = cand;
+            } catch(e) {
+                console.error('Error al verificar la contraseña:', e);
+                errorVerif = true;
+            }
 
             if (found) {
                 // Verificar vencimiento si es usuario de prueba
@@ -218,7 +281,7 @@
             } else {
                 document.getElementById('loginUser').classList.add('login-error');
                 document.getElementById('loginPass').classList.add('login-error');
-                errMsg.innerText = 'Usuario o contraseña incorrectos.';
+                errMsg.innerText = errorVerif ? 'No se pudo verificar la contraseña. Reinicia la aplicación.' : 'Usuario o contraseña incorrectos.';
                 btn.disabled = false;
                 btn.innerText = 'Ingresar al Sistema';
                 triggerLoginShake();
@@ -388,7 +451,7 @@
         document.getElementById('addUserError').innerText = '';
     }
 
-    function verifyAdmin() {
+    async function verifyAdmin() {
         var passInput = document.getElementById('adminAuthPass');
         var errEl = document.getElementById('adminAuthError');
         var entered = passInput.value.trim();
@@ -396,7 +459,17 @@
 
         if (!entered) { errEl.innerText = 'Ingresa la contraseña.'; return; }
 
-        if (entered === getAdminPass()) {
+        var okAdmin = false;
+        try {
+            await _fsMigrarClaves();
+            okAdmin = await _fsVerificarClave(entered, getAdminPassHash());
+        } catch(e) {
+            console.error('Error al verificar la contraseña de admin:', e);
+            errEl.innerText = 'No se pudo verificar la contraseña.';
+            return;
+        }
+
+        if (okAdmin) {
             document.getElementById('adminAuthStep').style.display = 'none';
             // Mostrar tabs
             var tabNav = document.getElementById('adminTabNav');
@@ -569,7 +642,7 @@
         document.getElementById('addUserError').innerText = '';
     }
 
-    function saveNewUser() {
+    async function saveNewUser() {
         var newUser  = document.getElementById('newUserName').value.trim();
         var newPass  = document.getElementById('newUserPass').value;
         var errEl    = document.getElementById('addUserError');
@@ -592,6 +665,15 @@
             if (vencDate < hoy) { errEl.innerText = 'La fecha de vencimiento no puede ser en el pasado.'; return; }
         }
 
+        var newHash;
+        try {
+            newHash = await _fsHashClave(newPass);
+        } catch(e) {
+            console.error('Error al proteger la contraseña:', e);
+            errEl.innerText = 'No se pudo proteger la contraseña. Reinicia la aplicación.';
+            return;
+        }
+
         var users = loadFsUsers();
 
         if (original) {
@@ -604,7 +686,8 @@
                 if (collision) { errEl.innerText = 'Ese nombre de usuario ya existe.'; return; }
                 users[idx].user = newUser;
             }
-            users[idx].pass = newPass;
+            users[idx].passHash = newHash;
+            delete users[idx].pass;
             // Solo actualizar tipo/vencimiento si no es admin
             if (!users[idx].isAdmin) {
                 if (esPrueba) {
@@ -619,7 +702,7 @@
             // Crear nuevo
             var exists = users.some(function(u) { return u.user === newUser; });
             if (exists) { errEl.innerText = 'Ese nombre de usuario ya existe.'; return; }
-            var nuevoUser = { user: newUser, pass: newPass, isAdmin: false };
+            var nuevoUser = { user: newUser, passHash: newHash, isAdmin: false };
             if (esPrueba) {
                 nuevoUser.tipo = 'prueba';
                 nuevoUser.vencimiento = vencimiento;
